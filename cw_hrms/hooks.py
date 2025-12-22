@@ -132,9 +132,9 @@ app_license = "mit"
 # override_doctype_class = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
-override_doctype_class = {
-    "Shift Type": "cw_hrms.overrides.shift_type.CustomShiftType"
-}
+# override_doctype_class = {
+#     "Shift Type": "cw_hrms.overrides.shift_type.CustomShiftType"
+# }
 
 # Document Events
 # ---------------
