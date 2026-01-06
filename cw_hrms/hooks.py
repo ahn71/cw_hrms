@@ -188,6 +188,11 @@ app_license = "mit"
 # 	"Task": "cw_hrms.task.get_dashboard_data"
 # }
 
+# hooks.py (correct)
+override_report_methods = {
+    "Shift Attendance": "cw_hrms.overrides.shift_attendance.execute"
+}
+
 # exempt linked doctypes from being automatically cancelled
 #
 # auto_cancel_exempted_doctypes = ["Auto Repeat"]
