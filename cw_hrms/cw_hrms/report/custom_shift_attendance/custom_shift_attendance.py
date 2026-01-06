@@ -78,6 +78,7 @@ def get_query(filters):
     query = query.groupby(attendance.name)
     return query
 
+
 def update_data(data, filters):
     consider_grace = filters.get("consider_grace_period")
     
