@@ -31,7 +31,7 @@ def get_columns():
         {"label": _("Shift End Time"), "fieldname": "shift_end", "fieldtype": "Data", "width": 125},
         {"label": _("In Time"), "fieldname": "in_time", "fieldtype": "Data", "width": 120},
         {"label": _("Out Time"), "fieldname": "out_time", "fieldtype": "Data", "width": 120},
-        {"label": _("Total Working Hours"), "fieldname": "working_hours", "fieldtype": "Float", "width": 100},
+        {"label": _("Total Working Hours"), "fieldname": "working_hours", "fieldtype": "Data", "width": 100},
         {"label": _("Late Entry By"), "fieldname": "late_entry_hrs", "fieldtype": "Data", "width": 120},
         {"label": _("Early Exit By"), "fieldname": "early_exit_hrs", "fieldtype": "Data", "width": 120},
         {"label": _("Department"), "fieldname": "department", "fieldtype": "Link", "options": "Department", "width": 150},
@@ -83,67 +83,96 @@ def update_data(data, filters):
     consider_grace = filters.get("consider_grace_period")
     
     for d in data:
-        d.working_hours = flt(d.get("working_hours") or 0)
-        wh = d.working_hours
+        # ১. কর্মঘণ্টা ক্যালকুলেশন (Out Time - In Time)
+        total_seconds = 0
+        if d.in_time and d.out_time:
+            # timedelta বের করা হচ্ছে
+            diff = d.out_time - d.in_time
+            total_seconds = diff.total_seconds()
+        
+        # ক্যালকুলেটেড সেকেন্ডকে HMS ফরম্যাটে নেওয়া
+        hms_time = format_seconds_to_hms(total_seconds)
+        
+        # সামারি ক্যালকুলেশনের জন্য float আওয়ার রাখা (যেমন: ৯.৫ ঘণ্টা)
+        d.working_hours_float = total_seconds / 3600.0
 
         d.is_weekend_or_holiday = 0
         h_list = d.get("holiday_list") or frappe.get_cached_value("Company", d.company, "default_holiday_list")
-        frappe.msgprint(_("Attendance Summary:\n") + h_list)
+        
         if h_list and d.get("attendance_date"):
-            # Database theke 'weekly_off' column-er value check korchi
             holiday_record = frappe.db.get_value("Holiday", 
                 {"parent": h_list, "holiday_date": d.attendance_date}, 
                 ["weekly_off"], as_dict=True)
-            
 
             if holiday_record:
                 d.is_weekend_or_holiday = 1
-                # weekly_off = 1 hole eita Weekend
                 if holiday_record.weekly_off:
                     d.status = _("Weekend")
                 else:
                     d.status = _("Holiday")
             else:
-                # Chuti na hole original status dekhabe
                 original_status = d.get("status") or "Absent"
-                d.status = f"{original_status} ({wh} hrs)"
+                if "on leave" in original_status.lower():
+                    d.status = _("On Leave")
+                else:
+                    # এখানে ক্যালকুলেটেড সময় (HMS) দেখাচ্ছে
+                    d.status = f"{original_status} ({hms_time})"
+
+        # কলামে ক্যালকুলেটেড সময় সেট করা
+        d.working_hours = hms_time
 
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
+        
+        # ফরম্যাটিং (এটি শেষে করা ভালো)
         d.in_time, d.out_time = format_in_out_time(d.in_time, d.out_time, d.attendance_date)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
     return data
-
 def get_report_summary(data):
     if not data: return []
 
     t = p = h = a = hol = l = e = leave = 0
-    total_wh = 0.0
+    total_seconds = 0.0  # নিখুঁত গড় বের করার জন্য সেকেন্ড ব্যবহার করা হয়েছে
     today = getdate(nowdate())
 
     for d in data:
         attendance_date = getdate(d.get("attendance_date"))
+        
+        # শুধুমাত্র আজ পর্যন্ত ডেটা সামারিতে আসবে
         if attendance_date <= today:
             t += 1
-            # কার্ডে ছুটির দিনগুলোকে অগ্রাধিকার দেওয়া
+            
+            # ১. ছুটির দিন আগে চেক করা হচ্ছে (Priority)
             if d.get("is_weekend_or_holiday"):
                 hol += 1
             else:
                 status = str(d.get("status") or "").strip().lower()
-                wh = flt(d.get("working_hours") or 0)
-                total_wh += wh
+                
+                # ২. working_hours_float (যা update_data তে ক্যালকুলেট করা) থেকে সেকেন্ড নেওয়া
+                wh_seconds = flt(d.get("working_hours_float") or 0) * 3600
+                total_seconds += wh_seconds
 
-                if "present" in status: p += 1
-                elif "half day" in status: h += 1
-                elif "on leave" in status: leave += 1
-                elif "absent" in status: a += 1
+                # ৩. স্ট্যাটাস অনুযায়ী কার্ডে ভাগ করা
+                if "present" in status:
+                    p += 1
+                elif "half day" in status:
+                    h += 1
+                elif "on leave" in status:
+                    leave += 1
+                elif "absent" in status:
+                    a += 1
 
+            # লেট এন্ট্রি এবং আর্লি এক্সিট কাউন্ট
             if d.get("late_entry"): l += 1
             if d.get("early_exit"): e += 1
 
+    # ৪. Average Working Hours ক্যালকুলেশন
     actual_working_days = p + h 
-    avg_wh = flt(total_wh / actual_working_days, 2) if actual_working_days > 0 else 0 
+    avg_seconds = total_seconds / actual_working_days if actual_working_days > 0 else 0 
+    
+    # গড় সময়কে HH:mm:ss ফরম্যাটে রূপান্তর
+    avg_wh_hms = format_seconds_to_hms(avg_seconds)
 
     return [
         {"value": t, "label": _("Total"), "indicator": "Blue", "datatype": "Int"},
@@ -154,9 +183,8 @@ def get_report_summary(data):
         {"value": hol, "label": _("Holiday"), "indicator": "Purple", "datatype": "Int"},
         {"value": h, "label": _("Half Day"), "indicator": "Orange", "datatype": "Int"},
         {"value": leave, "label": _("Leave"), "indicator": "Yellow", "datatype": "Int"},
-        {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Float"} 
+        {"value": avg_wh_hms, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"} 
     ]
-
 def get_chart_data(data):
     if not data: return None
     shifts = {}
@@ -208,3 +236,11 @@ def update_early_exit(entry, consider_grace_period):
     if diff and diff.total_seconds() > 0:
         entry.early_exit_hrs = format_duration(diff.total_seconds())
         entry.early_exit = 1
+
+def format_seconds_to_hms(seconds):
+    if not seconds or seconds <= 0:
+        return "00:00:00"
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"  
