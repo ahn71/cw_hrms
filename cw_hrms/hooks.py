@@ -21,6 +21,22 @@ app_license = "mit"
 # 	}
 # ]
 
+pages = [
+    {
+        "doctype": "Page",
+        "name": "employee-dashboard",
+        "label": "Employee Dashboard",
+        "module": "cw_hrms",
+        "standard": 1,
+        "content": "cw_hrms.page.employee_dashboard.employee_dashboard"
+    }
+]
+
+website_context = {
+    "favicon": "/assets/cw_hrms/images/favicon.png",
+    "splash_image": "/assets/cw_hrms/images/splash.png"
+}
+
 # Includes in <head>
 # ------------------
 
