@@ -62,6 +62,7 @@ app_license = "mit"
 
 # application home page (will override Website Settings)
 # home_page = "login"
+# home_page = "/app/custom-user-dashboar"
 
 # website user home page (by Role)
 # role_home_page = {
@@ -253,4 +254,5 @@ override_report_methods = {
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
+# Login 
+on_login = "cw_hrms.api.redirect_user"
