@@ -1,9 +1,18 @@
 frappe.pages['custom-user-dashboar'].on_page_load = function(wrapper) {
     let page = frappe.ui.make_app_page({
         parent: wrapper,
-        title: __('Employee Attendance Dashboard'),
-        single_column: true
+        title: __('User Dashboard'),
+        single_column: false // সাইডবার মেনু দেখানোর জন্য এটি অবশ্যই false হবে
     });
+
+    // বাম পাশে মডিউল লিস্ট বা সাইডবার মেনু রেন্ডার করা
+    // এটি ইউজারের পারমিশন অনুযায়ী মডিউলগুলো দেখাবে
+    wrapper.page.sidebar.html('<div class="module-sidebar-nav standard-sidebar"></div>');
+    
+    // ফ্রাপ্পের ডিফল্ট সাইডবার বিল্ডারকে ফোর্স করা
+    if (frappe.boot.navbar_settings.enable_side_bar) {
+        frappe.utils.make_navbar(); 
+    }
 
     frappe.call({
         method: 'cw_hrms.cw_hrms.page.custom_user_dashboar.custom_user_dashboar.get_user_stats',

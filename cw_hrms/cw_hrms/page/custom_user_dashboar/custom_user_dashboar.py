@@ -49,15 +49,16 @@ def get_user_stats():
             if a.late_entry: data["stats"]["late"] += 1
 
         # ২. লিভ সামারি (এটেন্ডেন্স টেবিল থেকে কাউন্ট করে)
-        # এক বছরের মধ্যে কতগুলো 'On Leave' আছে তার হিসাব
+        # এক বছরের মধ্যে কতগুলো 'Leave' দেয়া  আছে তার হিসাব
         leave_allocations = frappe.get_all("Leave Allocation",
             filters={"employee": employee, "docstatus": 1, "from_date": ["<=", today], "to_date": [">=", today]},
             fields=["leave_type", "total_leaves_allocated"]
         )
+        frappe.msgprint(f"Leave ALL: {leave_allocations}")
 
         for alloc in leave_allocations:
             # এটেন্ডেন্স টেবিল থেকে এই লিভ টাইপের বিপরীতে কয়টি লিভ নিয়েছে তা বের করা
-            # দ্রষ্টব্য: এখানে সাধারণত Leave Application এর সাথে লিঙ্ক থাকে, সহজ করার জন্য আমরা সরাসরি কাউন্ট করছি
+           
             taken = frappe.db.count("Attendance", filters={
                 "employee": employee,
                 "status": "On Leave",
