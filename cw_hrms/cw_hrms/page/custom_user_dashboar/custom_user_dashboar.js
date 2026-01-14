@@ -2,17 +2,8 @@ frappe.pages['custom-user-dashboar'].on_page_load = function(wrapper) {
     let page = frappe.ui.make_app_page({
         parent: wrapper,
         title: __('User Dashboard'),
-        single_column: false // সাইডবার মেনু দেখানোর জন্য এটি অবশ্যই false হবে
+        single_column: true
     });
-
-    // বাম পাশে মডিউল লিস্ট বা সাইডবার মেনু রেন্ডার করা
-    // এটি ইউজারের পারমিশন অনুযায়ী মডিউলগুলো দেখাবে
-    wrapper.page.sidebar.html('<div class="module-sidebar-nav standard-sidebar"></div>');
-    
-    // ফ্রাপ্পের ডিফল্ট সাইডবার বিল্ডারকে ফোর্স করা
-    if (frappe.boot.navbar_settings.enable_side_bar) {
-        frappe.utils.make_navbar(); 
-    }
 
     frappe.call({
         method: 'cw_hrms.cw_hrms.page.custom_user_dashboar.custom_user_dashboar.get_user_stats',
@@ -25,66 +16,121 @@ frappe.pages['custom-user-dashboar'].on_page_load = function(wrapper) {
 };
 
 function render_dashboard_html(page, data) {
-    let stats = data.stats;
+    // stats অবজেক্ট বা ডিফল্ট খালি অবজেক্ট
+    let stats = data.stats || {};
+    
     let html = `
-    <div class="p-4">
-        <div class="row mb-4">
-            ${createCard("Present", stats.present, "green")}
-            ${createCard("Absent", stats.absent, "red")}
-            ${createCard("Late", stats.late, "orange")}
-            ${createCard("Holiday", stats.holiday, "blue")}
-            ${createCard("On Leave", stats.leave, "purple")}
+    <div class="container-fluid p-4" style="background-color: #f8f9fa;">
+        <div class="row">
+            <div class="col-md-8">
+                <div class="row">
+                    ${createCard("Present", stats.present, "#28a745")}
+                    ${createCard("Absent", stats.absent, "#dc3545")}
+                    ${createCard("Late", stats.late, "#ffc107")}
+                </div>
+                <div class="row mt-3">
+                    ${createCard("Leave", stats.leave, "#6f42c1")}
+                    ${createCard("Weekend/Holiday", stats.weekend || stats.holiday, "#17a2b8")}
+                    ${createCard("Home Office", stats.home_office, "#fd7e14")}
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card shadow-sm mb-3 border-0">
+                    <div class="card-header bg-white font-weight-bold">Leave Allocation</div>
+                    <div class="p-2">
+                        ${(data.leave_allocation && data.leave_allocation.length) ? data.leave_allocation.map(l => `
+                            <div class="d-flex justify-content-between p-2 border-bottom">
+                                <span class="text-muted">${l.leave_type}</span>
+                                <span class="badge badge-primary badge-pill">${l.total}</span>
+                            </div>
+                        `).join('') : '<p class="text-center p-2 text-muted">No Allocation</p>'}
+                    </div>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-white font-weight-bold">Quick Links</div>
+                    <div class="card-body p-2">
+                        <button class="btn btn-outline-primary btn-sm btn-block mb-2" onclick="frappe.set_route('List', 'Leave Application', 'List')">Leave Application</button>
+                        <button class="btn btn-outline-secondary btn-sm btn-block" onclick="frappe.set_route('List', 'Employee Checkin', 'List')">Employee Checkin</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="card mb-4 shadow-sm">
-            <div class="card-header font-weight-bold">Leave Summary (Annual)</div>
-            <table class="table table-bordered m-0">
-                <thead class="bg-light text-center">
-                    <tr><th>Leave Type</th><th>Allocation</th><th>Taken</th><th>Balance</th></tr>
-                </thead>
-                <tbody class="text-center">
-                    ${data.leave_summary.length ? data.leave_summary.map(l => `
-                        <tr>
-                            <td>${l.leave_type}</td>
-                            <td>${l.total_allocated}</td>
-                            <td class="text-danger">${l.leaves_taken}</td>
-                            <td class="font-weight-bold text-success">${l.remaining}</td>
-                        </tr>
-                    `).join('') : '<tr><td colspan="4">No leave data found</td></tr>'}
-                </tbody>
-            </table>
-        </div>
+        <div class="row mt-5">
+            <div class="col-md-6">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header font-weight-bold bg-white border-0">Attendance Summary (Monthly)</div>
+                    <div class="table-responsive" style="max-height: 400px;">
+                        <table class="table table-sm table-hover text-center mb-0">
+                            <thead class="bg-light text-muted">
+                                <tr><th>SL</th><th>Date</th><th>In</th><th>Out</th><th>Stay</th><th>Status</th></tr>
+                            </thead>
+                            <tbody>
+                                ${data.attendance_details.map((a, i) => {
+                                    // স্ট্যাটাস অনুযায়ী ব্যাজ কালার নির্ধারণ
+                                    let badge_class = "secondary";
+                                    if(a.status === "Present") badge_class = "success";
+                                    else if(a.status === "Absent") badge_class = "danger";
+                                    else if(a.status === "Weekend" || a.status === "Holiday") badge_class = "info";
+                                    else if(a.status === "Work From Home") badge_class = "warning";
+                                    else if(a.status === "On Leave") badge_class = "primary";
 
-        <div class="card shadow-sm">
-            <div class="card-header font-weight-bold">Attendance Details (Current Month)</div>
-            <table class="table table-hover m-0">
-                <thead class="bg-light">
-                    <tr><th>Date</th><th>In Time</th><th>Out Time</th><th>Stay Time</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                    ${data.attendance_details.length ? data.attendance_details.map(a => `
-                        <tr>
-                            <td>${frappe.datetime.str_to_user(a.attendance_date)}</td>
-                            <td>${a.in_time ? frappe.datetime.get_time(a.in_time) : '--'}</td>
-                            <td>${a.out_time ? frappe.datetime.get_time(a.out_time) : '--'}</td>
-                            <td>${a.working_hours ? flt(a.working_hours).toFixed(2) + 'h' : '0'}</td>
-                            <td><span class="badge badge-${a.status=='Present'?'success':'secondary'}">${a.status}</span></td>
-                        </tr>
-                    `).join('') : '<tr><td colspan="5" class="text-center">No attendance found</td></tr>'}
-                </tbody>
-            </table>
+                                    return `
+                                    <tr>
+                                        <td>${i+1}</td>
+                                        <td>${frappe.datetime.str_to_user(a.attendance_date)}</td>
+                                        <td>${a.in_time ? frappe.datetime.get_time(a.in_time) : '--'}</td>
+                                        <td>${a.out_time ? frappe.datetime.get_time(a.out_time) : '--'}</td>
+                                        <td>${a.working_hours ? flt(a.working_hours).toFixed(2) : '0'}h</td>
+                                        <td><span class="badge badge-${badge_class}">${a.status}</span></td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header font-weight-bold bg-white border-0">Leave Summary (Yearly)</div>
+                    <div class="table-responsive" style="max-height: 400px;">
+                        <table class="table table-sm table-hover text-center mb-0">
+                            <thead class="bg-light text-muted">
+                                <tr><th>SL</th><th>From</th><th>To</th><th>Days</th><th>Type</th></tr>
+                            </thead>
+                            <tbody>
+                                ${(data.leave_history && data.leave_history.length) ? data.leave_history.map((l, i) => `
+                                    <tr>
+                                        <td>${i+1}</td>
+                                        <td>${frappe.datetime.str_to_user(l.from_date)}</td>
+                                        <td>${frappe.datetime.str_to_user(l.to_date)}</td>
+                                        <td>${l.total_leave_days}</td>
+                                        <td><span class="badge badge-info">${l.leave_type}</span></td>
+                                    </tr>
+                                `).join('') : '<tr><td colspan="5" class="p-3 text-muted">No records found</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>`;
 
     page.main.html(html);
 }
 
+// কার্ড তৈরির ফাংশন (N/A হ্যান্ডেল করা হয়েছে)
 function createCard(label, val, color) {
+    let display_val = (val === undefined || val === null || val === 0) ? "N/A" : val;
+    
     return `
-    <div class="col-md-2">
-        <div class="card p-3 text-center shadow-sm" style="border-bottom: 4px solid ${color}">
-            <div class="text-muted small">${label}</div>
-            <div class="h3 font-weight-bold" style="color: ${color}">${val}</div>
+    <div class="col-md-4">
+        <div class="card p-3 text-center shadow-sm border-0" style="border-top: 4px solid ${color}; border-radius: 8px;">
+            <div class="text-muted small font-weight-bold uppercase" style="letter-spacing: 0.5px;">${label}</div>
+            <div class="h3 font-weight-bold mt-2" style="color: ${color}">${display_val}</div>
         </div>
     </div>`;
 }

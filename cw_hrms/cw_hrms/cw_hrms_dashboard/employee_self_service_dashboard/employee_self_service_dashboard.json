@@ -1,0 +1,30 @@
+{
+ "cards": [
+  {
+   "card": "Total Present (This Month)"
+  },
+  {
+   "card": "Total Absent (This Month)"
+  },
+  {
+   "card": "Late Entry (This Month)"
+  }
+ ],
+ "charts": [
+  {
+   "width": "Half"
+  }
+ ],
+ "creation": "2026-01-07 10:55:17.876440",
+ "dashboard_name": "Employee Self Service Dashboard",
+ "docstatus": 0,
+ "doctype": "Dashboard",
+ "idx": 0,
+ "is_default": 0,
+ "is_standard": 1,
+ "modified": "2026-01-13 17:18:42.816593",
+ "modified_by": "rakibul.codeware@gmail.com",
+ "module": "CW HRMS",
+ "name": "Employee Self Service Dashboard",
+ "owner": "Administrator"
+}
