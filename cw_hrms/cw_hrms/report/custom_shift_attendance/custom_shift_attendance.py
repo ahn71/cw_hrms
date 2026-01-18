@@ -69,16 +69,27 @@ def get_query(filters):
         .where(attendance.docstatus == 1)
     )
 
-    # Filters
+    # --- ইউজার ভিত্তিক ফিল্টারিং ---
+    user_roles = frappe.get_roles(frappe.session.user)
+    if "HR Manager" not in user_roles and "System Manager" not in user_roles:
+        # লগইন করা ইউজারের সাথে যুক্ত Employee আইডি খুঁজে বের করা
+        logged_in_employee = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
+        if logged_in_employee:
+            query = query.where(attendance.employee == logged_in_employee)
+        else:
+            # যদি ইউজারের সাথে কোনো Employee লিংক না থাকে তবে কিছুই দেখাবে না
+            query = query.where(attendance.employee == "None")
+    # -----------------------------
+
+    # ফিল্টার হ্যান্ডলিং
     if filters.get("from_date"): query = query.where(attendance.attendance_date >= filters.get("from_date"))
     if filters.get("to_date"): query = query.where(attendance.attendance_date <= filters.get("to_date"))
     if filters.get("employee"): query = query.where(attendance.employee == filters.get("employee"))
     if filters.get("company"): query = query.where(attendance.company == filters.get("company"))
 
     query = query.groupby(attendance.name)
+    #frappe.msgprint(f"AttList ID: {query}")
     return query
-
-
 def update_data(data, filters):
     consider_grace = filters.get("consider_grace_period")
     
@@ -129,31 +140,29 @@ def update_data(data, filters):
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
     return data
+
+
 def get_report_summary(data):
     if not data: return []
-
-    t = p = h = a = hol = l = e = leave = 0
-    total_seconds = 0.0  # নিখুঁত গড় বের করার জন্য সেকেন্ড ব্যবহার করা হয়েছে
+    #frappe.msgprint(f"AttList ID: {data}")
+    t = p = l = a = e = hol = h = leave = 0
+    total_seconds = 0.0
     today = getdate(nowdate())
 
     for d in data:
-        attendance_date = getdate(d.get("attendance_date"))
-        
-        # শুধুমাত্র আজ পর্যন্ত ডেটা সামারিতে আসবে
-        if attendance_date <= today:
-            t += 1
+        # শুধুমাত্র আজ পর্যন্ত হওয়া এটেনডেন্সগুলো প্রসেস হবে
+        if getdate(d.get("attendance_date")) <= today:
+            t += 1 # Total Count
             
-            # ১. ছুটির দিন আগে চেক করা হচ্ছে (Priority)
             if d.get("is_weekend_or_holiday"):
                 hol += 1
             else:
                 status = str(d.get("status") or "").strip().lower()
                 
-                # ২. working_hours_float (যা update_data তে ক্যালকুলেট করা) থেকে সেকেন্ড নেওয়া
+                # গড় কর্মঘণ্টার জন্য সেকেন্ড ক্যালকুলেশন
                 wh_seconds = flt(d.get("working_hours_float") or 0) * 3600
                 total_seconds += wh_seconds
 
-                # ৩. স্ট্যাটাস অনুযায়ী কার্ডে ভাগ করা
                 if "present" in status:
                     p += 1
                 elif "half day" in status:
@@ -163,16 +172,12 @@ def get_report_summary(data):
                 elif "absent" in status:
                     a += 1
 
-            # লেট এন্ট্রি এবং আর্লি এক্সিট কাউন্ট
             if d.get("late_entry"): l += 1
             if d.get("early_exit"): e += 1
 
-    # ৪. Average Working Hours ক্যালকুলেশন
-    actual_working_days = p + h 
-    avg_seconds = total_seconds / actual_working_days if actual_working_days > 0 else 0 
-    
-    # গড় সময়কে HH:mm:ss ফরম্যাটে রূপান্তর
-    avg_wh_hms = format_seconds_to_hms(avg_seconds)
+    # গড় কর্মঘণ্টা (Avg Wh) বের করা
+    working_days = p + h
+    avg_wh_hms = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"
 
     return [
         {"value": t, "label": _("Total"), "indicator": "Blue", "datatype": "Int"},

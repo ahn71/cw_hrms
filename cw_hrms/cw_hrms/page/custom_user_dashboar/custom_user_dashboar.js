@@ -95,7 +95,7 @@ function render_dashboard_html(page, data) {
 
             <div class="col-md-6">
                 <div class="card shadow-sm border-0">
-                    <div class="card-header font-weight-bold bg-white border-0">Leave Summary (Yearly)</div>
+                    <div class="card-header font-weight-bold bg-red border-0">Leave Summary (Yearly)</div>
                     <div class="table-responsive" style="max-height: 400px;">
                         <table class="table table-sm table-hover text-center mb-0">
                             <thead class="bg-light text-muted">
