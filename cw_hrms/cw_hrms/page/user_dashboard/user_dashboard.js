@@ -1,4 +1,4 @@
-frappe.pages['custom-user-dashboar'].on_page_load = function(wrapper) {
+frappe.pages['user-dashboard'].on_page_load = function(wrapper) {
     let page = frappe.ui.make_app_page({
         parent: wrapper,
         title: __('User Dashboard'),
@@ -6,7 +6,7 @@ frappe.pages['custom-user-dashboar'].on_page_load = function(wrapper) {
     });
 
     frappe.call({
-        method: 'cw_hrms.cw_hrms.page.custom_user_dashboar.custom_user_dashboar.get_user_stats',
+        method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_user_stats',
         callback: function(r) {
             if (r.message) {
                 render_dashboard_html(page, r.message);

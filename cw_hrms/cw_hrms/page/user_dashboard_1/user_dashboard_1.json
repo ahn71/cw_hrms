@@ -1,15 +1,15 @@
 {
  "content": null,
- "creation": "2026-01-11 16:37:16.180711",
+ "creation": "2026-01-20 16:28:35.389454",
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-01-11 16:37:16.180711",
+ "modified": "2026-01-20 16:28:35.389454",
  "modified_by": "Administrator",
  "module": "CW HRMS",
- "name": "custom-user-dashboar",
+ "name": "user-dashboard-1",
  "owner": "Administrator",
- "page_name": "custom-user-dashboar",
+ "page_name": "user-dashboard-1",
  "roles": [
   {
    "role": "Employee"
@@ -28,5 +28,5 @@
  "standard": "Yes",
  "style": null,
  "system_page": 0,
- "title": " User Dashboard "
+ "title": "User Dashboard"
 }

@@ -1,9 +1,10 @@
 import frappe
-from frappe.utils import nowdate, get_first_day, get_last_day, getdate, add_days, flt
+from frappe.utils import nowdate, get_first_day, getdate, add_days, flt
 
 @frappe.whitelist()
 def get_user_stats():
     user = frappe.session.user
+    # ইউজারের এমপ্লয়ি প্রোফাইল সংগ্রহ
     employee_doc = frappe.db.get_value("Employee", {"user_id": user}, ["name", "company", "holiday_list"], as_dict=True)
     
     if not employee_doc:
@@ -11,9 +12,12 @@ def get_user_stats():
 
     employee = employee_doc.name
     today = getdate(nowdate())
+    
+    # আজকের দিন বাদ দেওয়ার জন্য গতকালের তারিখ বের করা হয়েছে
+    yesterday = add_days(today, -1) 
     month_start = getdate(get_first_day(today))
     
-    # year_start এবং year_end তৈরি করা হলো (এরর ফিক্স)
+    # বছরের শুরু এবং শেষ (লিভ হিস্ট্রির জন্য)
     year_start = f"{today.year}-01-01"
     year_end = f"{today.year}-12-31"
 
@@ -24,33 +28,34 @@ def get_user_stats():
         "leave_history": []
     }
 
-    # ১. এটেনডেন্স ডাটা সংগ্রহ
+    # ১. এটেনডেন্স ডাটা সংগ্রহ (মাসিক শুরু থেকে গতকাল পর্যন্ত)
     attendance_records = frappe.get_all("Attendance", 
-        filters={"employee": employee, "attendance_date": ["between", [month_start, today]], "docstatus": 1},
+        filters={"employee": employee, "attendance_date": ["between", [month_start, yesterday]], "docstatus": 1},
         fields=["attendance_date", "status", "late_entry", "in_time", "out_time", "working_hours"]
     )
     att_dict = {getdate(d.attendance_date): d for d in attendance_records}
 
-    # ২. হলিডে লিস্ট ডাটা সংগ্রহ
+    # ২. হলিডে লিস্ট ডাটা সংগ্রহ (গতকাল পর্যন্ত)
     h_list = employee_doc.holiday_list or frappe.db.get_value("Company", employee_doc.company, "default_holiday_list")
     holiday_dict = {}
     if h_list:
         holidays = frappe.db.sql("""SELECT holiday_date, description, weekly_off FROM `tabHoliday` 
                                     WHERE parent = %s AND holiday_date BETWEEN %s AND %s""", 
-                                 (h_list, month_start, today), as_dict=True)
+                                 (h_list, month_start, yesterday), as_dict=True)
         holiday_dict = {getdate(h.holiday_date): h for h in holidays}
 
-    # ৩. লুপ প্রসেসিং (১ তারিখ থেকে আজ পর্যন্ত)
+    # ৩. লুপ প্রসেসিং (১ তারিখ থেকে গতকাল পর্যন্ত)
     curr_date = month_start
     temp_details = []
 
-    while curr_date <= today:
+    while curr_date <= yesterday:
         status_to_show = ""
         in_t, out_t, work_h = None, None, 0
         
-        # Priority 1: Holiday List
+        # Priority 1: Holiday/Weekend Check
         if curr_date in holiday_dict:
             h_info = holiday_dict[curr_date]
+            # হলিডের দিনে যদি প্রেজেন্ট থাকে
             if curr_date in att_dict and att_dict[curr_date].status == "Present":
                 att = att_dict[curr_date]
                 status_to_show = "Present"
@@ -63,9 +68,9 @@ def get_user_stats():
                     data["stats"]["weekend"] += 1
                 else:
                     status_to_show = h_info.description or "Holiday"
-                    data["stats"]["holiday"] += 1 # এখানে ফিক্স করা হয়েছে
+                    data["stats"]["holiday"] += 1
 
-        # Priority 2: Attendance Database
+        # Priority 2: Attendance records from DB
         elif curr_date in att_dict:
             att = att_dict[curr_date]
             status_to_show = att.status
@@ -77,7 +82,7 @@ def get_user_stats():
             elif status_to_show == "Absent": data["stats"]["absent"] += 1
             if att.late_entry: data["stats"]["late"] += 1
 
-        # Priority 3: Absent
+        # Priority 3: No record found (Absent)
         else:
             status_to_show = "Absent"
             data["stats"]["absent"] += 1
@@ -91,10 +96,10 @@ def get_user_stats():
         })
         curr_date = add_days(curr_date, 1)
 
+    # তারিখ অনুযায়ী বড় থেকে ছোট ক্রমানুসারে সাজানো
     data["attendance_details"] = sorted(temp_details, key=lambda x: x['attendance_date'], reverse=True)
     
     # ৪. লিভ ডাটা (Allocation & History)
-    # Allocation-এ 'unused_leaves' ও আনা হয়েছে যাতে অবশিষ্ট ছুটি দেখা যায়
     data["leave_allocation"] = frappe.get_all("Leave Allocation",
         filters={"employee": employee, "docstatus": 1, "from_date": ["<=", today], "to_date": [">=", today]},
         fields=["leave_type", "total_leaves_allocated as total", "unused_leaves"])
