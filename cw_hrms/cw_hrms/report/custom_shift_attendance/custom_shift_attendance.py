@@ -114,7 +114,9 @@ def update_data(data, filters, holiday_map):
     if data:
         first_h_list = data[0].holiday_list or frappe.db.get_value("Company", data[0].company, "default_holiday_list")
         frappe.msgprint(_("Using Holiday List: {0} for matching.").format(first_h_list), alert=True)
-
+        sample_date = data[0].attendance_date
+        msg = f"Value: {sample_date} | Type: {type(sample_date)}"
+        frappe.msgprint(_("Database Date Format: {0}").format(msg), alert=True)
     for d in data:
         # সঠিক Holiday List খুঁজে বের করা
         h_list = d.holiday_list
