@@ -39,9 +39,15 @@ def get_data(filters):
     query = get_query(filters)
     data = query.run(as_dict=True)
     
-    # হলিডে ম্যাপ তৈরি (সার্ভারে পারফরম্যান্স এবং সঠিকতার জন্য)
+    # হলিডে ম্যাপ তৈরি (Using Dashboard Logic)
     holiday_map = get_holiday_map(filters)
     
+    # সার্ভারে চেক করার জন্য মেসেজ
+    if holiday_map:
+        frappe.msgprint(_("Found {0} holiday records in the selected range.").format(len(holiday_map)), alert=True)
+    else:
+        frappe.msgprint(_("No holidays found! Please check your Holiday List settings."), indicator="orange", alert=True)
+
     # ডাটা আপডেট
     data = update_data(data, filters, holiday_map)
     return data
@@ -51,15 +57,15 @@ def get_holiday_map(filters):
     to_date = filters.get("to_date") or "2099-12-31"
     
     holidays = frappe.db.sql("""
-        SELECT parent, holiday_date, weekly_off 
+        SELECT parent, holiday_date, description, weekly_off 
         FROM `tabHoliday` 
         WHERE holiday_date BETWEEN %s AND %s
     """, (from_date, to_date), as_dict=True)
     
     holiday_map = {}
     for h in holidays:
-        # Key: ListName_Date
-        key = f"{h.parent}_{h.holiday_date}"
+        # Tuple key (List Name, Date Object) - সবচেয়ে নিরাপদ পদ্ধতি
+        key = (h.parent, getdate(h.holiday_date))
         holiday_map[key] = h
     return holiday_map
 
@@ -104,11 +110,10 @@ def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
     
-    # ডিবাগিং মেসেজ: কতগুলো ছুটি পাওয়া গেছে তা স্ক্রিনের উপরে দেখাবে
-    if holiday_map:
-        frappe.msgprint(_("Total Holidays found in system: {0}").format(len(holiday_map)), alert=True)
-    else:
-        frappe.msgprint(_("No Holidays found in the selected range!"), alert=True, indicator="orange")
+    # সার্ভারে চেক করার জন্য প্রথম রো-তে কোন লিস্ট ব্যবহার হচ্ছে তা দেখাচ্ছে
+    if data:
+        first_h_list = data[0].holiday_list or frappe.db.get_value("Company", data[0].company, "default_holiday_list")
+        frappe.msgprint(_("Using Holiday List: {0} for matching.").format(first_h_list), alert=True)
 
     for d in data:
         # সঠিক Holiday List খুঁজে বের করা
@@ -118,16 +123,20 @@ def update_data(data, filters, holiday_map):
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
             h_list = company_holiday_lists[d.company]
 
-        # হলিডে চেক করার জন্য কী (Key) তৈরি
-        holiday_key = f"{h_list}_{d.attendance_date}"
+        # ম্যাচিং কী (Dashboard Logic)
+        att_date = getdate(d.attendance_date)
+        holiday_key = (h_list, att_date)
+        
         holiday_info = holiday_map.get(holiday_key)
 
         d.is_weekend_or_holiday = 0
         if holiday_info:
             d.is_weekend_or_holiday = 1
-            d.status = _("Weekend") if holiday_info.weekly_off else _("Holiday")
+            if holiday_info.weekly_off:
+                d.status = _("Weekend")
+            else:
+                d.status = _(holiday_info.description or "Holiday")
         else:
-            # স্ট্যাটাস সেট করা (টাইম ছাড়া)
             d.status = _(d.status or "Absent")
 
         # কর্মঘণ্টা হিসাব
