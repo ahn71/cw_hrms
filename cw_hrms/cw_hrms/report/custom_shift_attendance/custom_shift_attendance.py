@@ -1,4 +1,5 @@
-
+# Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and contributors
+# For license information, please see license.txt
 
 from datetime import timedelta
 import frappe
@@ -21,7 +22,7 @@ def get_columns():
         {"label": _("Employee"), "fieldname": "employee", "fieldtype": "Link", "options": "Employee", "width": 220},
         {"label": _("Shift"), "fieldname": "shift", "fieldtype": "Link", "options": "Shift Type", "width": 120},
         {"label": _("Attendance Date"), "fieldname": "attendance_date", "fieldtype": "Date", "width": 130},
-        {"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 150},
+        {"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 100},
         {"label": _("Shift Start Time"), "fieldname": "shift_start", "fieldtype": "Data", "width": 125},
         {"label": _("Shift End Time"), "fieldname": "shift_end", "fieldtype": "Data", "width": 125},
         {"label": _("In Time"), "fieldname": "in_time", "fieldtype": "Data", "width": 120},
@@ -38,19 +39,17 @@ def get_data(filters):
     query = get_query(filters)
     data = query.run(as_dict=True)
     
-    # ১. ছুটির তালিকা একবারে মেমোরিতে আনা (Optimized for Server)
+    # হলিডে ম্যাপ তৈরি (সার্ভারে পারফরম্যান্স এবং সঠিকতার জন্য)
     holiday_map = get_holiday_map(filters)
     
-    # ২. ডাটা প্রসেসিং
+    # ডাটা আপডেট
     data = update_data(data, filters, holiday_map)
     return data
 
 def get_holiday_map(filters):
-    # কোম্পানির ডিফল্ট হলিডে লিস্ট এবং এমপ্লয়ি অনুযায়ী হলিডে ম্যাপ তৈরি
     from_date = filters.get("from_date") or "2000-01-01"
     to_date = filters.get("to_date") or "2099-12-31"
     
-    # সব হলিডে একবারে নিয়ে আসা (Key হবে: list_name_date)
     holidays = frappe.db.sql("""
         SELECT parent, holiday_date, weekly_off 
         FROM `tabHoliday` 
@@ -59,6 +58,7 @@ def get_holiday_map(filters):
     
     holiday_map = {}
     for h in holidays:
+        # Key: ListName_Date
         key = f"{h.parent}_{h.holiday_date}"
         holiday_map[key] = h
     return holiday_map
@@ -87,7 +87,6 @@ def get_query(filters):
         .where(attendance.docstatus == 1)
     )
 
-    # ইউজার রোল ফিল্টারিং
     user_roles = frappe.get_roles(frappe.session.user)
     if "HR Manager" not in user_roles and "System Manager" not in user_roles:
         emp = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
@@ -102,19 +101,17 @@ def get_query(filters):
 
 def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
-    
-    # কোম্পানির ডিফল্ট লিস্ট ক্যাশ করে রাখা
     company_holiday_lists = {}
 
     for d in data:
-        # ১. সঠিক Holiday List নির্ধারণ
+        # সঠিক Holiday List খুঁজে বের করা
         h_list = d.holiday_list
         if not h_list:
             if d.company not in company_holiday_lists:
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
             h_list = company_holiday_lists[d.company]
 
-        # ২. ডিকশনারি থেকে ছুটি চেক করা (Super Fast)
+        # হলিডে চেক
         holiday_key = f"{h_list}_{d.attendance_date}"
         holiday_info = holiday_map.get(holiday_key)
 
@@ -122,27 +119,23 @@ def update_data(data, filters, holiday_map):
         if holiday_info:
             d.is_weekend_or_holiday = 1
             d.status = _("Weekend") if holiday_info.weekly_off else _("Holiday")
+        else:
+            # স্ট্যাটাসের সাথে সময় বাদ দেওয়া হয়েছে (আপনার রিকোয়েস্ট অনুযায়ী)
+            d.status = _(d.status) or _("Absent")
 
-        # ৩. কর্মঘণ্টা হিসাব
+        # কর্মঘণ্টা হিসাব
         total_seconds = 0
         if d.in_time and d.out_time:
             diff = d.out_time - d.in_time
             total_seconds = diff.total_seconds()
         
-        hms_time = format_seconds_to_hms(total_seconds)
         d.working_hours_float = total_seconds / 3600.0
+        d.working_hours = format_seconds_to_hms(total_seconds)
 
-        if not d.is_weekend_or_holiday:
-            orig_status = d.status or "Absent"
-            if "on leave" in orig_status.lower():
-                d.status = _("On Leave")
-            else:
-                d.status = f"{orig_status} ({hms_time})"
-
-        d.working_hours = hms_time
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
+        # টাইম ফরম্যাটিং
         d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
