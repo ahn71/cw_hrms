@@ -123,36 +123,38 @@ def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
     
-    # --- ডিবাগিং: স্ক্রিনে ২০টি হলিডে প্রিন্ট করার জন্য ---
-    if holiday_map:
-        message_content = "<b>Holiday Map (Total {0} records):</b><br><ol>".format(len(holiday_map))
-        # ২০টি ডাটা লুপ করে মেসেজে যোগ করা হচ্ছে
-        for key, val in holiday_map.items():
-            h_type = "Weekly Off" if val.get("weekly_off") else "Public Holiday"
-            message_content += f"<li>Key: <span style='color:blue'>{key}</span> | Name: {val.get('description')} ({h_type})</li>"
-        message_content += "</ol>"
-        
-        # wide=True দিলে বড় স্ক্রিনে লিস্টটি সুন্দর দেখাবে
-        frappe.msgprint(message_content, title=_("Server Holiday Data"), wide=True)
-    else:
-        frappe.msgprint(_("Warning: Holiday Map is empty!"), indicator="orange")
+    # ম্যাপ খালি থাকলে লুপ চালানোর দরকার নেই
+    if not holiday_map:
+        frappe.msgprint(_("Holiday Map is empty! Please check if Holidays are created for 2026."), indicator="orange")
 
-    # --- মূল প্রসেসিং লুপ ---
     for d in data:
-        # ১. এমপ্লয়ীর হলিডে লিস্ট নির্ধারণ
-        h_list = d.holiday_list
+        # ১. এমপ্লয়ীর লিস্ট ক্লিন করা (Leading/Trailing Spaces মুছে ফেলা)
+        h_list = str(d.holiday_list or "").strip()
+        
         if not h_list:
             if d.company not in company_holiday_lists:
-                company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
+                company_holiday_lists[d.company] = str(frappe.db.get_value("Company", d.company, "default_holiday_list") or "").strip()
             h_list = company_holiday_lists[d.company]
 
-        # ২. ম্যাচিং কি (Key) তৈরি - স্ট্রিং ফরম্যাটে (যাতে সার্ভারে টাইপ এরর না হয়)
+        # ২. তারিখ ফরম্যাট
         att_date_str = str(getdate(d.attendance_date))
+        
+        # ৩. কী (Key) তৈরি
         holiday_key = f"{h_list}|{att_date_str}"
         
-        # ৩. ছুটির তথ্য চেক করা
+        # ৪. ডাটা খোঁজা
         holiday_info = holiday_map.get(holiday_key)
 
+        # --- ফেইলসেফ লজিক (যদি সরাসরি না মেলে) ---
+        if not holiday_info:
+            # অনেক সময় এমপ্লয়ীর প্রোফাইলে 'Holiday 2025' থাকে কিন্তু আমরা ২০২৬ এর ডাটা দেখছি
+            # এই লজিকটি ওই তারিখে অন্য যেকোনো লিস্টে ছুটি আছে কি না চেক করবে
+            for key, val in holiday_map.items():
+                if att_date_str in key: # তারিখ মিলে গেলেই আমরা সেটাকে ছুটি হিসেবে ধরবো
+                    holiday_info = val
+                    break
+        
+        # ৫. স্ট্যাটাস এবং ফ্ল্যাগ আপডেট
         d.is_weekend_or_holiday = 0
         if holiday_info:
             d.is_weekend_or_holiday = 1
@@ -161,31 +163,35 @@ def update_data(data, filters, holiday_map):
             else:
                 d.status = _(holiday_info.description or "Holiday")
         else:
-            # ছুটি না হলে ডাটাবেসের অরিজিনাল স্ট্যাটাস (Present/Absent/Half Day)
-            d.status = _(d.status or "Absent")
+            # যদি প্রেজেন্ট না থাকে তবেই কেবল এবসেন্ট দেখানো
+            if d.status not in ["Present", "Half Day", "On Leave"]:
+                d.status = _("Absent")
+            else:
+                d.status = _(d.status)
 
-        # ৪. কর্মঘণ্টা হিসাব (Total Working Hours)
+        # ৬. কর্মঘণ্টা ও অন্যান্য ক্যালকুলেশন
         total_seconds = 0
         if d.in_time and d.out_time:
             try:
-                # ইন-টাইম এবং আউট-টাইম এর পার্থক্য বের করা
+                # আউট-টাইম থেকে ইন-টাইম বিয়োগ
                 diff = d.out_time - d.in_time
                 total_seconds = diff.total_seconds()
-            except:
+            except: 
                 total_seconds = 0
         
         d.working_hours_float = total_seconds / 3600.0
         d.working_hours = format_seconds_to_hms(total_seconds)
 
-        # ৫. লেট এন্ট্রি এবং আর্লি এক্সিট আপডেট
+        # লেট এন্ট্রি এবং আর্লি এক্সিট প্রসেসিং
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
-        # ৬. রিপোর্টের ভিউ ঠিক করার জন্য টাইম ফরম্যাটিং
+        # টাইম ফরম্যাট ঠিক করা (যেমন: 09:00:00)
         d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
-
+    
     return data
+
 def get_report_summary(data):
     if not data: return []
     t = p = l = a = e = hol = h = leave = 0
@@ -196,7 +202,8 @@ def get_report_summary(data):
         att_date = getdate(d.get("attendance_date"))
         if att_date <= today:
             t += 1
-            if d.get("is_weekend_or_holiday"):
+            # --- ডিবাগিং: সামারিতে হলিডে কাউন্ট হচ্ছে কি না দেখা ---
+            if d.get("is_weekend_or_holiday") == 1:
                 hol += 1
             else:
                 status = str(d.get("status") or "").lower()
@@ -210,6 +217,10 @@ def get_report_summary(data):
 
             if d.get("late_entry"): l += 1
             if d.get("early_exit"): e += 1
+
+    # --- ফাইনাল কাউন্ট চেক ---
+    if hol == 0 and t > 0:
+        frappe.msgprint("<b>Summary Error:</b> Weekend/Holiday count is 0. Check 'is_weekend_or_holiday' flag in update_data loop.", alert=True)
 
     working_days = p + h
     avg_wh = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"
@@ -225,7 +236,6 @@ def get_report_summary(data):
         {"value": leave, "label": _("Leave"), "indicator": "Yellow", "datatype": "Int"},
         {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"}
     ]
-
 def get_chart_data(data):
     if not data: return None
     shifts = {}
@@ -236,7 +246,6 @@ def get_chart_data(data):
         "data": {"labels": list(shifts.keys()), "datasets": [{"values": list(shifts.values())}]},
         "type": "percentage"
     }
-
 def convert_datetime_to_time_for_same_date(start, end):
     try:
         f_start = start.strftime("%H:%M:%S") if start else None
