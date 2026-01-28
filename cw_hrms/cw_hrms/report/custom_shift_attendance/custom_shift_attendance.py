@@ -39,15 +39,9 @@ def get_data(filters):
     query = get_query(filters)
     data = query.run(as_dict=True)
     
-    # হলিডে ম্যাপ তৈরি (Using Dashboard Logic)
+    # হলিডে ম্যাপ তৈরি (String based key for maximum server compatibility)
     holiday_map = get_holiday_map(filters)
     
-    # সার্ভারে চেক করার জন্য মেসেজ
-    if holiday_map:
-        frappe.msgprint(_("Found {0} holiday records in the selected range.").format(len(holiday_map)), alert=True)
-    else:
-        frappe.msgprint(_("No holidays found! Please check your Holiday List settings."), indicator="orange", alert=True)
-
     # ডাটা আপডেট
     data = update_data(data, filters, holiday_map)
     return data
@@ -64,8 +58,10 @@ def get_holiday_map(filters):
     
     holiday_map = {}
     for h in holidays:
-        # Tuple key (List Name, Date Object) - সবচেয়ে নিরাপদ পদ্ধতি
-        key = (h.parent, getdate(h.holiday_date))
+        # তারিখকে স্ট্যান্ডার্ড স্ট্রিং ফরম্যাটে (YYYY-MM-DD) রূপান্তর করছি
+        h_date_str = str(getdate(h.holiday_date))
+        # Key: "Holiday List Name|2026-01-01"
+        key = f"{h.parent}|{h_date_str}"
         holiday_map[key] = h
     return holiday_map
 
@@ -110,24 +106,17 @@ def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
     
-    # সার্ভারে চেক করার জন্য প্রথম রো-তে কোন লিস্ট ব্যবহার হচ্ছে তা দেখাচ্ছে
-    if data:
-        first_h_list = data[0].holiday_list or frappe.db.get_value("Company", data[0].company, "default_holiday_list")
-        frappe.msgprint(_("Using Holiday List: {0} for matching.").format(first_h_list), alert=True)
-        sample_date = data[0].attendance_date
-        msg = f"Value: {sample_date} | Type: {type(sample_date)}"
-        frappe.msgprint(_("Database Date Format: {0}").format(msg), alert=True)
     for d in data:
-        # সঠিক Holiday List খুঁজে বের করা
+        # ১. হলিডে লিস্ট নির্ধারণ
         h_list = d.holiday_list
         if not h_list:
             if d.company not in company_holiday_lists:
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
             h_list = company_holiday_lists[d.company]
 
-        # ম্যাচিং কী (Dashboard Logic)
-        att_date = getdate(d.attendance_date)
-        holiday_key = (h_list, att_date)
+        # ২. ম্যাচিং কি (Key) তৈরি - স্ট্রিং ফরম্যাটে
+        att_date_str = str(getdate(d.attendance_date))
+        holiday_key = f"{h_list}|{att_date_str}"
         
         holiday_info = holiday_map.get(holiday_key)
 
@@ -141,11 +130,17 @@ def update_data(data, filters, holiday_map):
         else:
             d.status = _(d.status or "Absent")
 
-        # কর্মঘণ্টা হিসাব
+        # ৩. কর্মঘণ্টা হিসাব
         total_seconds = 0
         if d.in_time and d.out_time:
-            diff = d.out_time - d.in_time
-            total_seconds = diff.total_seconds()
+            # যদি ইন-টাইম বা আউট-টাইম স্ট্রিং হিসেবে আসে (সার্ভারে মাঝেমাঝে হয়)
+            it = getdate(d.in_time) if isinstance(d.in_time, str) else d.in_time
+            ot = getdate(d.out_time) if isinstance(d.out_time, str) else d.out_time
+            try:
+                diff = d.out_time - d.in_time
+                total_seconds = diff.total_seconds()
+            except:
+                total_seconds = 0
         
         d.working_hours_float = total_seconds / 3600.0
         d.working_hours = format_seconds_to_hms(total_seconds)
@@ -166,7 +161,8 @@ def get_report_summary(data):
     today = getdate(nowdate())
 
     for d in data:
-        if getdate(d.get("attendance_date")) <= today:
+        att_date = getdate(d.get("attendance_date"))
+        if att_date <= today:
             t += 1
             if d.get("is_weekend_or_holiday"):
                 hol += 1
@@ -210,35 +206,46 @@ def get_chart_data(data):
     }
 
 def convert_datetime_to_time_for_same_date(start, end):
-    f_start = start.strftime("%H:%M:%S") if start else None
-    f_end = end.strftime("%H:%M:%S") if end else None
-    return f_start, f_end
+    try:
+        f_start = start.strftime("%H:%M:%S") if start else None
+        f_end = end.strftime("%H:%M:%S") if end else None
+        return f_start, f_end
+    except:
+        return str(start), str(end)
 
 def update_late_entry(entry, consider_grace):
     if not entry.in_time or not entry.shift_start: return
     diff = None
-    if consider_grace:
-        grace = entry.late_entry_grace_period if entry.enable_late_entry_marking else 0
-        limit = entry.shift_start + timedelta(minutes=cint(grace))
-        if entry.in_time > limit: diff = entry.in_time - limit
-    elif entry.in_time > entry.shift_start:
-        diff = entry.in_time - entry.shift_start
-    if diff and diff.total_seconds() > 0:
-        entry.late_entry_hrs = format_duration(diff.total_seconds())
-        entry.late_entry = 1
+    try:
+        if consider_grace:
+            grace = entry.late_entry_grace_period if entry.enable_late_entry_marking else 0
+            limit = entry.shift_start + timedelta(minutes=cint(grace))
+            if entry.in_time > limit: diff = entry.in_time - limit
+        elif entry.in_time > entry.shift_start:
+            diff = entry.in_time - entry.shift_start
+        
+        if diff and diff.total_seconds() > 0:
+            entry.late_entry_hrs = format_duration(diff.total_seconds())
+            entry.late_entry = 1
+    except:
+        pass
 
 def update_early_exit(entry, consider_grace):
     if not entry.out_time or not entry.shift_end: return
     diff = None
-    if consider_grace:
-        grace = entry.early_exit_grace_period if entry.enable_early_exit_marking else 0
-        limit = entry.shift_end - timedelta(minutes=cint(grace))
-        if entry.out_time < limit: diff = limit - entry.out_time
-    elif entry.out_time < entry.shift_end:
-        diff = entry.shift_end - entry.out_time
-    if diff and diff.total_seconds() > 0:
-        entry.early_exit_hrs = format_duration(diff.total_seconds())
-        entry.early_exit = 1
+    try:
+        if consider_grace:
+            grace = entry.early_exit_grace_period if entry.enable_early_exit_marking else 0
+            limit = entry.shift_end - timedelta(minutes=cint(grace))
+            if entry.out_time < limit: diff = limit - entry.out_time
+        elif entry.out_time < entry.shift_end:
+            diff = entry.shift_end - entry.out_time
+        
+        if diff and diff.total_seconds() > 0:
+            entry.early_exit_hrs = format_duration(diff.total_seconds())
+            entry.early_exit = 1
+    except:
+        pass
 
 def format_seconds_to_hms(seconds):
     if not seconds or seconds <= 0: return "00:00:00"
