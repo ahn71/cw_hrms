@@ -64,23 +64,20 @@ def get_data(filters):
     return data
 
 def get_holiday_map(filters):
-    from_date = filters.get("from_date") or "2000-01-01"
-    to_date = filters.get("to_date") or "2099-12-31"
+    """আপনার কোডের লজিক অনুযায়ী তারিখ দিয়ে ম্যাপ তৈরি"""
+    from_date = filters.get("from_date")
+    to_date = filters.get("to_date")
     
+    # আমরা সব ছুটির তারিখ সংগ্রহ করছি (কোম্পানি ওয়াইজ ফিল্টার করা যেতে পারে)
     holidays = frappe.db.sql("""
-        SELECT parent, holiday_date, description, weekly_off 
+        SELECT holiday_date, description, weekly_off 
         FROM `tabHoliday` 
         WHERE holiday_date BETWEEN %s AND %s
     """, (from_date, to_date), as_dict=True)
     
-    holiday_map = {}
-    for h in holidays:
-        # তারিখকে স্ট্যান্ডার্ড স্ট্রিং ফরম্যাটে (YYYY-MM-DD) রূপান্তর করছি
-        h_date_str = str(getdate(h.holiday_date))
-        # Key: "Holiday List Name|2026-01-01"
-        key = f"{h.parent}|{h_date_str}"
-        holiday_map[key] = h
-    return holiday_map
+    # সরাসরি তারিখকে Key হিসেবে রেখে ডিকশনারি তৈরি
+    holiday_dict = {getdate(h.holiday_date): h for h in holidays}
+    return holiday_dict
 
 def get_query(filters):
     attendance = frappe.qb.DocType("Attendance")
@@ -121,70 +118,68 @@ def get_query(filters):
 
 def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
-    company_holiday_lists = {}
     
-    # ম্যাপ থেকে সব কি (keys) বের করে রাখা (যেমন: ['List|2026-01-01', ...])
-    all_holiday_keys = list(holiday_map.keys()) if holiday_map else []
+    # আপনার দেওয়া লজিক অনুযায়ী holiday_map থেকে সরাসরি তারিখ দিয়ে চেক করা হবে।
+    # মনে রাখবেন: holiday_map-টি get_holiday_map ফাংশনে {getdate(date): info} ফরম্যাটে থাকতে হবে।
 
     for d in data:
-        # ১. এমপ্লয়ীর লিস্ট ক্লিন করা
-        h_list = str(d.holiday_list or "").strip()
+        # ১. অ্যাটেনডেন্স তারিখ সংগ্রহ (Date Object হিসেবে)
+        curr_date = getdate(d.attendance_date)
         
-        if not h_list:
-            if d.company not in company_holiday_lists:
-                company_holiday_lists[d.company] = str(frappe.db.get_value("Company", d.company, "default_holiday_list") or "").strip()
-            h_list = company_holiday_lists[d.company]
-
-        # ২. তারিখ ফরম্যাট করা
-        att_date_str = str(getdate(d.attendance_date))
-        
-        # ৩. প্রাথমিক কি (Key) তৈরি করা
-        holiday_key = f"{h_list}|{att_date_str}"
-        
-        # ৪. ছুটির তথ্য চেক করা
-        holiday_info = holiday_map.get(holiday_key)
-
-        # --- ফিক্স লজিক: যদি সরাসরি নামে না মেলে ---
-        if not holiday_info:
-            # যদি নামের বানানে বা বছরে ভুল থাকে, তবে শুধু তারিখ দিয়ে ম্যাপে খুঁজি
-            for key in all_holiday_keys:
-                if att_date_str in key: # যদি তারিখটি ম্যাপের কোনো কি-তে থাকে
-                    holiday_info = holiday_map[key]
-                    break
-
-        # ৫. ফ্ল্যাগ এবং স্ট্যাটাস আপডেট (এটিই সামারির জন্য সবচেয়ে গুরুত্বপূর্ণ)
+        # ডিফল্ট ফ্ল্যাগ সেট করা (যা সামারিতে ব্যবহৃত হয়)
         d.is_weekend_or_holiday = 0
-        if holiday_info:
-            d.is_weekend_or_holiday = 1 # এই ফ্ল্যাগটিই সামারিতে কাউন্ট বাড়াবে
+        
+        # ২. আপনার শেয়ার করা লজিক ইমপ্লিমেন্টেশন
+        # সরাসরি চেক করা হচ্ছে এই তারিখটি হলিডে ডিকশনারিতে আছে কি না
+        if curr_date in holiday_map:
+            h_info = holiday_map[curr_date]
             
-            if holiday_info.weekly_off:
-                d.status = _("Weekend")
+            # যদি ছুটির দিনেও কেউ প্রেজেন্ট থাকে, তবে সেটি প্রেজেন্ট হিসেবেই দেখাবে
+            if d.status == "Present":
+                d.is_weekend_or_holiday = 0
+                d.status = _("Present")
             else:
-                d.status = _(holiday_info.description or "Holiday")
+                # অন্যথায় এটি উইকেন্ড অথবা হলিডে
+                d.is_weekend_or_holiday = 1
+                if h_info.weekly_off:
+                    d.status = _("Weekend")
+                else:
+                    d.status = _(h_info.description or "Holiday")
         else:
-            # যদি ছুটি না হয়, তবে অরিজিনাল স্ট্যাটাস
-            d.status = _(d.status or "Absent")
+            # ৩. ছুটি না হলে ডাটাবেসের অরিজিনাল স্ট্যাটাস (Present/Absent/Half Day/Leave)
+            if not d.status:
+                d.status = _("Absent")
+            else:
+                # স্ট্যাটাস স্ট্রিং হলে সেটাকে অনুবাদযোগ্য করা
+                d.status = _(str(d.status))
 
-        # ৬. সময় ও কর্মঘণ্টা ক্যালকুলেশন
+        # ৪. কর্মঘণ্টা হিসাব (Total Working Hours)
         total_seconds = 0
-        if d.in_time and d.out_time:
+        # অ্যাটেনডেন্স ডকটাইপে working_hours সাধারণত float হিসেবে থাকে (ঘণ্টা)
+        if d.working_hours and flt(d.working_hours) > 0:
+            total_seconds = flt(d.working_hours) * 3600
+        elif d.in_time and d.out_time:
             try:
+                # ইন-টাইম এবং আউট-টাইম এর পার্থক্য বের করা
                 diff = d.out_time - d.in_time
                 total_seconds = diff.total_seconds()
-            except: 
+            except:
                 total_seconds = 0
         
+        # রিপোর্টের জন্য float এবং HMS ফরম্যাট দুইটাই রাখা হচ্ছে
         d.working_hours_float = total_seconds / 3600.0
         d.working_hours = format_seconds_to_hms(total_seconds)
 
+        # ৫. লেট এন্ট্রি এবং আর্লি এক্সিট আপডেট (গ্রেস পিরিয়ড সহ)
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
-        # রিপোর্টের ভিউ সুন্দর করার জন্য টাইম ফরম্যাটিং
+        # ৬. রিপোর্টের ভিউ ঠিক করার জন্য ডেট-টাইম থেকে শুধু টাইম ফরম্যাটিং
         d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
     
     return data
+
 def get_report_summary(data):
     if not data: return []
     t = p = l = a = e = hol = h = leave = 0
