@@ -99,9 +99,16 @@ def get_query(filters):
 
     return query.groupby(attendance.name)
 
+
 def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
+    
+    # ডিবাগিং মেসেজ: কতগুলো ছুটি পাওয়া গেছে তা স্ক্রিনের উপরে দেখাবে
+    if holiday_map:
+        frappe.msgprint(_("Total Holidays found in system: {0}").format(len(holiday_map)), alert=True)
+    else:
+        frappe.msgprint(_("No Holidays found in the selected range!"), alert=True, indicator="orange")
 
     for d in data:
         # সঠিক Holiday List খুঁজে বের করা
@@ -111,7 +118,7 @@ def update_data(data, filters, holiday_map):
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
             h_list = company_holiday_lists[d.company]
 
-        # হলিডে চেক
+        # হলিডে চেক করার জন্য কী (Key) তৈরি
         holiday_key = f"{h_list}_{d.attendance_date}"
         holiday_info = holiday_map.get(holiday_key)
 
@@ -120,8 +127,8 @@ def update_data(data, filters, holiday_map):
             d.is_weekend_or_holiday = 1
             d.status = _("Weekend") if holiday_info.weekly_off else _("Holiday")
         else:
-            # স্ট্যাটাসের সাথে সময় বাদ দেওয়া হয়েছে (আপনার রিকোয়েস্ট অনুযায়ী)
-            d.status = _(d.status) or _("Absent")
+            # স্ট্যাটাস সেট করা (টাইম ছাড়া)
+            d.status = _(d.status or "Absent")
 
         # কর্মঘণ্টা হিসাব
         total_seconds = 0
