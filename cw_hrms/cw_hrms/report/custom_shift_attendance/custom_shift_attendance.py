@@ -106,18 +106,34 @@ def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
     
+    # --- ডিবাগিং: স্ক্রিনে ২০টি হলিডে প্রিন্ট করার জন্য ---
+    if holiday_map:
+        message_content = "<b>Holiday Map (Total {0} records):</b><br><ol>".format(len(holiday_map))
+        # ২০টি ডাটা লুপ করে মেসেজে যোগ করা হচ্ছে
+        for key, val in holiday_map.items():
+            h_type = "Weekly Off" if val.get("weekly_off") else "Public Holiday"
+            message_content += f"<li>Key: <span style='color:blue'>{key}</span> | Name: {val.get('description')} ({h_type})</li>"
+        message_content += "</ol>"
+        
+        # wide=True দিলে বড় স্ক্রিনে লিস্টটি সুন্দর দেখাবে
+        frappe.msgprint(message_content, title=_("Server Holiday Data"), wide=True)
+    else:
+        frappe.msgprint(_("Warning: Holiday Map is empty!"), indicator="orange")
+
+    # --- মূল প্রসেসিং লুপ ---
     for d in data:
-        # ১. হলিডে লিস্ট নির্ধারণ
+        # ১. এমপ্লয়ীর হলিডে লিস্ট নির্ধারণ
         h_list = d.holiday_list
         if not h_list:
             if d.company not in company_holiday_lists:
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
             h_list = company_holiday_lists[d.company]
 
-        # ২. ম্যাচিং কি (Key) তৈরি - স্ট্রিং ফরম্যাটে
+        # ২. ম্যাচিং কি (Key) তৈরি - স্ট্রিং ফরম্যাটে (যাতে সার্ভারে টাইপ এরর না হয়)
         att_date_str = str(getdate(d.attendance_date))
         holiday_key = f"{h_list}|{att_date_str}"
         
+        # ৩. ছুটির তথ্য চেক করা
         holiday_info = holiday_map.get(holiday_key)
 
         d.is_weekend_or_holiday = 0
@@ -128,15 +144,14 @@ def update_data(data, filters, holiday_map):
             else:
                 d.status = _(holiday_info.description or "Holiday")
         else:
+            # ছুটি না হলে ডাটাবেসের অরিজিনাল স্ট্যাটাস (Present/Absent/Half Day)
             d.status = _(d.status or "Absent")
 
-        # ৩. কর্মঘণ্টা হিসাব
+        # ৪. কর্মঘণ্টা হিসাব (Total Working Hours)
         total_seconds = 0
         if d.in_time and d.out_time:
-            # যদি ইন-টাইম বা আউট-টাইম স্ট্রিং হিসেবে আসে (সার্ভারে মাঝেমাঝে হয়)
-            it = getdate(d.in_time) if isinstance(d.in_time, str) else d.in_time
-            ot = getdate(d.out_time) if isinstance(d.out_time, str) else d.out_time
             try:
+                # ইন-টাইম এবং আউট-টাইম এর পার্থক্য বের করা
                 diff = d.out_time - d.in_time
                 total_seconds = diff.total_seconds()
             except:
@@ -145,15 +160,15 @@ def update_data(data, filters, holiday_map):
         d.working_hours_float = total_seconds / 3600.0
         d.working_hours = format_seconds_to_hms(total_seconds)
 
+        # ৫. লেট এন্ট্রি এবং আর্লি এক্সিট আপডেট
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
-        # টাইম ফরম্যাটিং
+        # ৬. রিপোর্টের ভিউ ঠিক করার জন্য টাইম ফরম্যাটিং
         d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
     return data
-
 def get_report_summary(data):
     if not data: return []
     t = p = l = a = e = hol = h = leave = 0
