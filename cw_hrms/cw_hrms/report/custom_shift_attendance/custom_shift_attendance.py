@@ -19,30 +19,28 @@ def execute(filters=None):
 
 def get_columns():
     return [
-        {"label": _("Employee"), "fieldname": "employee", "fieldtype": "Link", "options": "Employee", "width": 220},
+        {"label": _("Employee"), "fieldname": "employee", "fieldtype": "Link", "options": "Employee", "width": 200},
         {"label": _("Shift"), "fieldname": "shift", "fieldtype": "Link", "options": "Shift Type", "width": 120},
-        {"label": _("Attendance Date"), "fieldname": "attendance_date", "fieldtype": "Date", "width": 130},
+        {"label": _("Attendance Date"), "fieldname": "attendance_date", "fieldtype": "Date", "width": 120},
         {"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 100},
-        {"label": _("Shift Start Time"), "fieldname": "shift_start", "fieldtype": "Data", "width": 125},
-        {"label": _("Shift End Time"), "fieldname": "shift_end", "fieldtype": "Data", "width": 125},
-        {"label": _("In Time"), "fieldname": "in_time", "fieldtype": "Data", "width": 120},
-        {"label": _("Out Time"), "fieldname": "out_time", "fieldtype": "Data", "width": 120},
-        {"label": _("Total Working Hours"), "fieldname": "working_hours", "fieldtype": "Data", "width": 100},
-        {"label": _("Late Entry By"), "fieldname": "late_entry_hrs", "fieldtype": "Data", "width": 120},
-        {"label": _("Early Exit By"), "fieldname": "early_exit_hrs", "fieldtype": "Data", "width": 120},
-        {"label": _("Department"), "fieldname": "department", "fieldtype": "Link", "options": "Department", "width": 150},
-        {"label": _("Company"), "fieldname": "company", "fieldtype": "Link", "options": "Company", "width": 150},
-        {"label": _("Attendance ID"), "fieldname": "name", "fieldtype": "Link", "options": "Attendance", "width": 150},
+        {"label": _("In Time"), "fieldname": "in_time", "fieldtype": "Data", "width": 100},
+        {"label": _("Out Time"), "fieldname": "out_time", "fieldtype": "Data", "width": 100},
+        {"label": _("Working Hours"), "fieldname": "working_hours", "fieldtype": "Data", "width": 100},
+        {"label": _("Late Entry"), "fieldname": "late_entry_hrs", "fieldtype": "Data", "width": 100},
+        {"label": _("Early Exit"), "fieldname": "early_exit_hrs", "fieldtype": "Data", "width": 100},
+        {"label": _("Department"), "fieldname": "department", "fieldtype": "Link", "options": "Department", "width": 120},
+        {"label": _("Company"), "fieldname": "company", "fieldtype": "Link", "options": "Company", "width": 120},
     ]
 
 def get_data(filters):
+    # ১. এটেনডেন্স ডাটা সংগ্রহ
     query = get_query(filters)
     data = query.run(as_dict=True)
     
-    # হলিডে ম্যাপ তৈরি (String based key for maximum server compatibility)
+    # ২. হলিডে ম্যাপ তৈরি (Nested Dictionary Logic)
     holiday_map = get_holiday_map(filters)
     
-    # ডাটা আপডেট
+    # ৩. ডাটা প্রসেসিং
     data = update_data(data, filters, holiday_map)
     return data
 
@@ -58,11 +56,15 @@ def get_holiday_map(filters):
     
     holiday_map = {}
     for h in holidays:
-        # তারিখকে স্ট্যান্ডার্ড স্ট্রিং ফরম্যাটে (YYYY-MM-DD) রূপান্তর করছি
-        h_date_str = str(getdate(h.holiday_date))
-        # Key: "Holiday List Name|2026-01-01"
-        key = f"{h.parent}|{h_date_str}"
-        holiday_map[key] = h
+        h_list = str(h.parent).strip()
+        h_date = getdate(h.holiday_date) # Python Date Object
+        
+        if h_list not in holiday_map:
+            holiday_map[h_list] = {}
+        
+        # ডিকশনারির ভেতর ডিকশনারি: { "Holiday List Name": { date_object: holiday_info } }
+        holiday_map[h_list][h_date] = h
+        
     return holiday_map
 
 def get_query(filters):
@@ -89,6 +91,7 @@ def get_query(filters):
         .where(attendance.docstatus == 1)
     )
 
+    # রোল ভিত্তিক ফিল্টার
     user_roles = frappe.get_roles(frappe.session.user)
     if "HR Manager" not in user_roles and "System Manager" not in user_roles:
         emp = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
@@ -101,40 +104,27 @@ def get_query(filters):
 
     return query.groupby(attendance.name)
 
-
 def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
     company_holiday_lists = {}
     
-    # --- ডিবাগিং: স্ক্রিনে ২০টি হলিডে প্রিন্ট করার জন্য ---
-    if holiday_map:
-        message_content = "<b>Holiday Map (Total {0} records):</b><br><ol>".format(len(holiday_map))
-        # ২০টি ডাটা লুপ করে মেসেজে যোগ করা হচ্ছে
-        for key, val in holiday_map.items():
-            h_type = "Weekly Off" if val.get("weekly_off") else "Public Holiday"
-            message_content += f"<li>Key: <span style='color:blue'>{key}</span> | Name: {val.get('description')} ({h_type})</li>"
-        message_content += "</ol>"
-        
-        # wide=True দিলে বড় স্ক্রিনে লিস্টটি সুন্দর দেখাবে
-        frappe.msgprint(message_content, title=_("Server Holiday Data"), wide=True)
-    else:
-        frappe.msgprint(_("Warning: Holiday Map is empty!"), indicator="orange")
-
-    # --- মূল প্রসেসিং লুপ ---
     for d in data:
-        # ১. এমপ্লয়ীর হলিডে লিস্ট নির্ধারণ
-        h_list = d.holiday_list
-        if not h_list:
+        # ১. এমপ্লয়ীর জন্য সঠিক হলিডে লিস্ট খুঁজে বের করা
+        h_list_name = d.holiday_list
+        if not h_list_name:
             if d.company not in company_holiday_lists:
                 company_holiday_lists[d.company] = frappe.db.get_value("Company", d.company, "default_holiday_list")
-            h_list = company_holiday_lists[d.company]
-
-        # ২. ম্যাচিং কি (Key) তৈরি - স্ট্রিং ফরম্যাটে (যাতে সার্ভারে টাইপ এরর না হয়)
-        att_date_str = str(getdate(d.attendance_date))
-        holiday_key = f"{h_list}|{att_date_str}"
+            h_list_name = company_holiday_lists[d.company]
         
-        # ৩. ছুটির তথ্য চেক করা
-        holiday_info = holiday_map.get(holiday_key)
+        h_list_name = str(h_list_name or "").strip()
+
+        # ২. ম্যাচিং করার জন্য Date Object তৈরি
+        att_date = getdate(d.attendance_date)
+        
+        # ৩. Nested Dictionary থেকে ছুটি চেক করা
+        holiday_info = None
+        if h_list_name in holiday_map and att_date in holiday_map[h_list_name]:
+            holiday_info = holiday_map[h_list_name][att_date]
 
         d.is_weekend_or_holiday = 0
         if holiday_info:
@@ -144,31 +134,25 @@ def update_data(data, filters, holiday_map):
             else:
                 d.status = _(holiday_info.description or "Holiday")
         else:
-            # ছুটি না হলে ডাটাবেসের অরিজিনাল স্ট্যাটাস (Present/Absent/Half Day)
             d.status = _(d.status or "Absent")
 
-        # ৪. কর্মঘণ্টা হিসাব (Total Working Hours)
-        total_seconds = 0
-        if d.in_time and d.out_time:
-            try:
-                # ইন-টাইম এবং আউট-টাইম এর পার্থক্য বের করা
-                diff = d.out_time - d.in_time
-                total_seconds = diff.total_seconds()
-            except:
-                total_seconds = 0
+        # ৪. ক্যালকুলেশন এবং ফরম্যাটিং
+        total_seconds = flt(d.working_hours or 0) * 3600
+        if not total_seconds and d.in_time and d.out_time:
+            diff = d.out_time - d.in_time
+            total_seconds = diff.total_seconds()
         
         d.working_hours_float = total_seconds / 3600.0
         d.working_hours = format_seconds_to_hms(total_seconds)
 
-        # ৫. লেট এন্ট্রি এবং আর্লি এক্সিট আপডেট
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
-        # ৬. রিপোর্টের ভিউ ঠিক করার জন্য টাইম ফরম্যাটিং
         d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
     return data
+
 def get_report_summary(data):
     if not data: return []
     t = p = l = a = e = hol = h = leave = 0
@@ -176,8 +160,8 @@ def get_report_summary(data):
     today = getdate(nowdate())
 
     for d in data:
-        att_date = getdate(d.get("attendance_date"))
-        if att_date <= today:
+        # শুধুমাত্র আজ বা তার আগের দিনের হিসাব সামারিতে আসবে
+        if getdate(d.get("attendance_date")) <= today:
             t += 1
             if d.get("is_weekend_or_holiday"):
                 hol += 1
@@ -198,69 +182,60 @@ def get_report_summary(data):
     avg_wh = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"
 
     return [
-        {"value": t, "label": _("Total"), "indicator": "Blue", "datatype": "Int"},
+        {"value": t, "label": _("Total Days"), "indicator": "Blue", "datatype": "Int"},
         {"value": p, "label": _("Present"), "indicator": "Green", "datatype": "Int"},
-        {"value": l, "label": _("Late"), "indicator": "Red", "datatype": "Int"},
+        {"value": hol, "label": _("Holiday/Weekend"), "indicator": "Purple", "datatype": "Int"},
         {"value": a, "label": _("Absent"), "indicator": "Red", "datatype": "Int"},
-        {"value": e, "label": _("Early"), "indicator": "Red", "datatype": "Int"},
-        {"value": hol, "label": _("Holiday"), "indicator": "Purple", "datatype": "Int"},
-        {"value": h, "label": _("Half Day"), "indicator": "Orange", "datatype": "Int"},
-        {"value": leave, "label": _("Leave"), "indicator": "Yellow", "datatype": "Int"},
-        {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"}
+        {"value": l, "label": _("Late Entry"), "indicator": "Red", "datatype": "Int"},
+        {"value": leave, "label": _("On Leave"), "indicator": "Yellow", "datatype": "Int"},
+        {"value": avg_wh, "label": _("Avg Work Hours"), "indicator": "Blue", "datatype": "Data"}
     ]
 
 def get_chart_data(data):
     if not data: return None
-    shifts = {}
-    for entry in data:
-        s = entry.shift or _("No Shift")
-        shifts[s] = shifts.get(s, 0) + 1
+    status_counts = {}
+    for d in data:
+        status = d.status or "Unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+    
     return {
-        "data": {"labels": list(shifts.keys()), "datasets": [{"values": list(shifts.values())}]},
-        "type": "percentage"
+        "data": {
+            "labels": list(status_counts.keys()),
+            "datasets": [{"values": list(status_counts.values())}]
+        },
+        "type": "donut"
     }
 
 def convert_datetime_to_time_for_same_date(start, end):
-    try:
-        f_start = start.strftime("%H:%M:%S") if start else None
-        f_end = end.strftime("%H:%M:%S") if end else None
-        return f_start, f_end
-    except:
-        return str(start), str(end)
+    f_start = start.strftime("%H:%M:%S") if start and not isinstance(start, str) else start
+    f_end = end.strftime("%H:%M:%S") if end and not isinstance(end, str) else end
+    return f_start, f_end
 
 def update_late_entry(entry, consider_grace):
     if not entry.in_time or not entry.shift_start: return
     diff = None
-    try:
-        if consider_grace:
-            grace = entry.late_entry_grace_period if entry.enable_late_entry_marking else 0
-            limit = entry.shift_start + timedelta(minutes=cint(grace))
-            if entry.in_time > limit: diff = entry.in_time - limit
-        elif entry.in_time > entry.shift_start:
-            diff = entry.in_time - entry.shift_start
-        
-        if diff and diff.total_seconds() > 0:
-            entry.late_entry_hrs = format_duration(diff.total_seconds())
-            entry.late_entry = 1
-    except:
-        pass
+    if consider_grace:
+        grace = entry.late_entry_grace_period if entry.enable_late_entry_marking else 0
+        limit = entry.shift_start + timedelta(minutes=cint(grace))
+        if entry.in_time > limit: diff = entry.in_time - limit
+    elif entry.in_time > entry.shift_start:
+        diff = entry.in_time - entry.shift_start
+    if diff and diff.total_seconds() > 0:
+        entry.late_entry_hrs = format_duration(diff.total_seconds())
+        entry.late_entry = 1
 
 def update_early_exit(entry, consider_grace):
     if not entry.out_time or not entry.shift_end: return
     diff = None
-    try:
-        if consider_grace:
-            grace = entry.early_exit_grace_period if entry.enable_early_exit_marking else 0
-            limit = entry.shift_end - timedelta(minutes=cint(grace))
-            if entry.out_time < limit: diff = limit - entry.out_time
-        elif entry.out_time < entry.shift_end:
-            diff = entry.shift_end - entry.out_time
-        
-        if diff and diff.total_seconds() > 0:
-            entry.early_exit_hrs = format_duration(diff.total_seconds())
-            entry.early_exit = 1
-    except:
-        pass
+    if consider_grace:
+        grace = entry.early_exit_grace_period if entry.enable_early_exit_marking else 0
+        limit = entry.shift_end - timedelta(minutes=cint(grace))
+        if entry.out_time < limit: diff = limit - entry.out_time
+    elif entry.out_time < entry.shift_end:
+        diff = entry.shift_end - entry.out_time
+    if diff and diff.total_seconds() > 0:
+        entry.early_exit_hrs = format_duration(diff.total_seconds())
+        entry.early_exit = 1
 
 def format_seconds_to_hms(seconds):
     if not seconds or seconds <= 0: return "00:00:00"
