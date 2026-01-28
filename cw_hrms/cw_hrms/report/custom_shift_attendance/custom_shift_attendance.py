@@ -94,23 +94,19 @@ def update_data(data, filters):
     consider_grace = filters.get("consider_grace_period")
     
     for d in data:
-        # ১. কর্মঘণ্টা ক্যালকুলেশন (Out Time - In Time)
         total_seconds = 0
         if d.in_time and d.out_time:
-            # timedelta বের করা হচ্ছে
             diff = d.out_time - d.in_time
             total_seconds = diff.total_seconds()
         
-        # ক্যালকুলেটেড সেকেন্ডকে HMS ফরম্যাটে নেওয়া
         hms_time = format_seconds_to_hms(total_seconds)
-        
-        # সামারি ক্যালকুলেশনের জন্য float আওয়ার রাখা (যেমন: ৯.৫ ঘণ্টা)
         d.working_hours_float = total_seconds / 3600.0
 
         d.is_weekend_or_holiday = 0
-        h_list = d.get("holiday_list") or frappe.get_cached_value("Company", d.company, "default_holiday_list")
+        # লাইভ সার্ভারের জন্য ক্যাশ এড়িয়ে সরাসরি ভ্যালু নেওয়া
+        h_list = d.holiday_list or frappe.db.get_value("Company", d.company, "default_holiday_list")
         
-        if h_list and d.get("attendance_date"):
+        if h_list and d.attendance_date:
             holiday_record = frappe.db.get_value("Holiday", 
                 {"parent": h_list, "holiday_date": d.attendance_date}, 
                 ["weekly_off"], as_dict=True)
@@ -126,21 +122,17 @@ def update_data(data, filters):
                 if "on leave" in original_status.lower():
                     d.status = _("On Leave")
                 else:
-                    # এখানে ক্যালকুলেটেড সময় (HMS) দেখাচ্ছে
                     d.status = f"{original_status} ({hms_time})"
 
-        # কলামে ক্যালকুলেটেড সময় সেট করা
         d.working_hours = hms_time
-
         update_late_entry(d, consider_grace)
         update_early_exit(d, consider_grace)
         
-        # ফরম্যাটিং (এটি শেষে করা ভালো)
-        d.in_time, d.out_time = format_in_out_time(d.in_time, d.out_time, d.attendance_date)
+        # ফরম্যাটিং: এখানে শুধুমাত্র সময় রিটার্ন করবে
+        d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
         d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
 
     return data
-
 
 def get_report_summary(data):
     if not data: return []
@@ -206,11 +198,11 @@ def format_in_out_time(in_time, out_time, attendance_date):
     return convert_datetime_to_time_for_same_date(in_time, out_time)
 
 def convert_datetime_to_time_for_same_date(start, end):
-    if not start or not end:
-        return format_datetime(start) if start else None, format_datetime(end) if end else None
-    if start.date() == end.date():
-        return start.time(), end.time()
-    return format_datetime(start), format_datetime(end)
+    # ইন-টাইম এবং আউট-টাইম যাই হোক না কেন, শুধুমাত্র সময় টুকু নেওয়া হচ্ছে
+    formatted_start = start.strftime("%H:%M:%S") if start else None
+    formatted_end = end.strftime("%H:%M:%S") if end else None
+    
+    return formatted_start, formatted_end
 
 def format_float_precision(value):
     precision = cint(frappe.db.get_default("float_precision")) or 2

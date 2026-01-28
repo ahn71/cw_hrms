@@ -4,7 +4,7 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-01-21 12:51:43.155984",
+ "modified": "2026-01-22 15:55:28.398039",
  "modified_by": "Administrator",
  "module": "CW HRMS",
  "name": "user-dashboard",
@@ -22,6 +22,9 @@
   },
   {
    "role": "HR User"
+  },
+  {
+   "role": "User HR"
   }
  ],
  "script": null,
