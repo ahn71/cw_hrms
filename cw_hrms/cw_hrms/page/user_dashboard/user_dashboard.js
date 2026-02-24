@@ -102,16 +102,19 @@ function append_sidebar_item(container, item, all_pages, is_public) {
 		child_container.removeClass('hidden');
 	}
 }
+
+
 function render_dashboard_html(page, data) {
     let stats = data.stats || {};
-	let total_used_leaves = 0;
+    let total_used_leaves = 0;
 
-    // ২. লুপ চালিয়ে ডাটাগুলো যোগ করুন
+    // ১. ব্যবহৃত লিভ ক্যালকুলেট করা
     if (data.leave_allocation) {
         data.leave_allocation.forEach(l => {
             total_used_leaves += (l.used_leave || 0);
         });
     }
+
     let html = `
     <style>
         .dash-container { padding: 15px; background: #f8f9fc; font-family: sans-serif; }
@@ -123,17 +126,17 @@ function render_dashboard_html(page, data) {
         .section { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .sec-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
         
-        /* Attendance Scroll Setting */
         .attendance-scroll { max-height: 400px; overflow-y: auto; }
-        
         .m-table { width: 100%; border-collapse: collapse; }
         .m-table th { position: sticky; top: 0; background: white; text-align: left; font-size: 11px; color: #777; padding: 8px; border-bottom: 2px solid #f4f4f4; z-index: 1; }
         .m-table td { padding: 8px; font-size: 12px; border-bottom: 1px solid #f4f4f4; vertical-align: middle; }
         
-        .date-cell { white-space: nowrap; font-weight: 700; color: #333; min-width: 100px; }
         .badge { padding: 3px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }
         .bg-present { background: #e6fffa; color: #38a169; }
         .bg-absent { background: #fff5f5; color: #e53e3e; }
+        .bg-holiday { background: #ebf4ff; color: #3182ce; }
+        .bg-weekend { background: #f7fafc; color: #718096; }
+        .bg-default { background: #edf2f7; color: #4a5568; }
         
         @media (max-width: 992px) { .main-grid { grid-template-columns: 1fr; } }
     </style>
@@ -166,13 +169,22 @@ function render_dashboard_html(page, data) {
                                 let in_t = a.in_time ? a.in_time.split(' ')[1].substring(0,8) : '--:--:--';
                                 let out_t = a.out_time ? a.out_time.split(' ')[1].substring(0,8) : '--:--:--';
                                 let formatted_date = frappe.datetime.str_to_user(a.attendance_date);
+                                
+                                // Status Logic for Classes
+                                let status_val = a.status ? a.status.toLowerCase() : '';
+                                let badge_class = 'bg-default';
+                                if (status_val.includes('present')) badge_class = 'bg-present';
+                                else if (status_val.includes('absent')) badge_class = 'bg-absent';
+                                else if (status_val.includes('holiday') || status_val.includes('election')) badge_class = 'bg-holiday';
+                                else if (status_val.includes('weekend') || status_val.includes('weekly')) badge_class = 'bg-weekend';
+
                                 return `
                                     <tr>
-                                        <td class="date-cell">${formatted_date}</td>
+                                        <td><b>${formatted_date}</b></td>
                                         <td>${in_t}</td>
                                         <td>${out_t}</td>
-                                        <td><strong>${a.working_hours}</strong></td>
-                                        <td><span class="badge bg-${a.status.toLowerCase().replace(/ /g, '-')}">${a.status}</span></td>
+                                        <td><strong>${a.working_hours || '00:00:00'}</strong></td>
+                                        <td><span class="badge ${badge_class}">${a.status}</span></td>
                                     </tr>
                                 `;
                             }).join('')}
@@ -217,8 +229,7 @@ function render_dashboard_html(page, data) {
                         </tbody>
                     </table>
                 </div>
-            </div> </div> </div>
-    `;
+            </div> </div> </div> `;
     page.main.html(html);
 }
 

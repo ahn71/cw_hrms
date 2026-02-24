@@ -53,7 +53,7 @@ def get_data(filters):
                 seen_employees.add(d.employee)
         
         debug_msg += "</table>"
-        frappe.msgprint(debug_msg, title="Debug: Holiday List Check", wide=True)
+        # frappe.msgprint(debug_msg, title="Debug: Holiday List Check", wide=True)
     # --- ডিবাগিং শেষ ---
 
     # ২. হলিডে ম্যাপ তৈরি
@@ -207,8 +207,8 @@ def get_report_summary(data):
             if d.get("early_exit"): e += 1
 
     # --- ফাইনাল কাউন্ট চেক ---
-    if hol == 0 and t > 0:
-        frappe.msgprint("<b>Summary Error:</b> Weekend/Holiday count is 0. Check 'is_weekend_or_holiday' flag in update_data loop.", alert=True)
+    # if hol == 0 and t > 0:
+    #     frappe.msgprint("<b>Summary Error:</b> Weekend/Holiday count is 0. Check 'is_weekend_or_holiday' flag in update_data loop.", alert=True)
 
     working_days = p + h
     avg_wh = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"

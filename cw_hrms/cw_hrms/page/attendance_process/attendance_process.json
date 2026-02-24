@@ -1,0 +1,29 @@
+{
+ "content": null,
+ "creation": "2026-02-02 15:18:14.892183",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-02-02 15:18:14.892183",
+ "modified_by": "Administrator",
+ "module": "CW HRMS",
+ "name": "attendance-process",
+ "owner": "Administrator",
+ "page_name": "attendance-process",
+ "roles": [
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "HR User"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Attendance Process"
+}
