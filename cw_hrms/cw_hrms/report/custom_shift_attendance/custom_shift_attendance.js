@@ -73,11 +73,11 @@ formatter: (value, row, column, data, default_formatter) => {
 		console.log("Hello Codware",column);
         // ২. আপনার রিপোর্টের কলাম নাম অনুযায়ী (Total Working Hours)
         if (column.fieldname === "working_hours") {
-            console.log("working_hours Codware");
-			console.log("Data Codware",data);
+            // console.log("working_hours Codware");
+			// console.log("Data Codware",data);
             // শিফট স্টার্ট এবং এন্ড টাইম থাকলে তুলনা শুরু হবে
             if (data.shift_start && data.shift_end && value) {
-                console.log("shift_start_time Codware");
+                // console.log("shift_start_time Codware");
                 // সময়কে সেকেন্ডে রূপান্তর করার ফাংশন (HH:MM:SS ফরম্যাটের জন্য)
                 const get_seconds = (time_str) => {
                     if (!time_str) return 0;
@@ -86,19 +86,19 @@ formatter: (value, row, column, data, default_formatter) => {
                 };
 
 			let shift_start_sec = get_seconds(data.shift_start);
-            console.log("Shift Start:", data.shift_start, "-> Seconds:", shift_start_sec);
+            // console.log("Shift Start:", data.shift_start, "-> Seconds:", shift_start_sec);
 
             let shift_end_sec = get_seconds(data.shift_end);
-            console.log("Shift End:", data.shift_end, "-> Seconds:", shift_end_sec);
+            // console.log("Shift End:", data.shift_end, "-> Seconds:", shift_end_sec);
 
             let shift_duration_sec = shift_end_sec - shift_start_sec;
-            console.log("Total Shift Duration (Seconds):", shift_duration_sec);
+            // console.log("Total Shift Duration (Seconds):", shift_duration_sec);
 
             let actual_working_val = data.working_hours;
             let actual_working_sec = get_seconds(actual_working_val);
-            console.log("Actual Working Time:", actual_working_val, "-> Seconds:", actual_working_sec);
+            // console.log("Actual Working Time:", actual_working_val, "-> Seconds:", actual_working_sec);
 			if (actual_working_sec < shift_duration_sec) {
-                console.log("%c Result: LESS THAN SHIFT TIME - Applying Red Color", "color: red; font-weight: bold;");
+                // console.log("%c Result: LESS THAN SHIFT TIME - Applying Red Color", "color: red; font-weight: bold;");
                 value = `<span style='color:red!important; font-weight:bold;'>${value}</span>`;
             }
             }
