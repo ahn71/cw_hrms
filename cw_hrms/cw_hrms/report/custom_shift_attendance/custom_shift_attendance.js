@@ -15,7 +15,7 @@ frappe.query_reports["Custom Shift Attendance"] = {
 			label: __("To Date"),
 			fieldtype: "Date",
 			reqd: 1,
-			default: frappe.datetime.month_end(),
+			default: frappe.datetime.get_today(),
 		},
 		{
 			fieldname: "employee",

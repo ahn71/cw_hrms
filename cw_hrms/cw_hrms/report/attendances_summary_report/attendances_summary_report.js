@@ -21,7 +21,7 @@ frappe.query_reports["Attendances Summary Report"] = {
             "fieldname": "to_date",
             "label": __("To Date"),
             "fieldtype": "Date",
-            "default": frappe.datetime.month_end(),
+            "default": frappe.datetime.get_today(),
             "reqd": 1
         },
         {
