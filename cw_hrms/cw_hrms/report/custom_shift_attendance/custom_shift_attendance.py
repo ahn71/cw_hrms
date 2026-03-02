@@ -2,9 +2,12 @@
 # For license information, please see license.txt
 
 from datetime import timedelta
+import json
 import frappe
+import copy
 from frappe import _
-from frappe.utils import cint, flt, format_datetime, format_duration, getdate, nowdate
+from frappe.utils import cint, flt, format_datetime, format_duration, getdate,add_days, nowdate,flt
+
 
 def execute(filters=None):
     if not filters:
@@ -116,75 +119,122 @@ def get_query(filters):
     return query.groupby(attendance.name)
 
 
+
+
 def update_data(data, filters, holiday_map):
     consider_grace = filters.get("consider_grace_period")
-    
-    # আপনার দেওয়া লজিক অনুযায়ী holiday_map থেকে সরাসরি তারিখ দিয়ে চেক করা হবে।
-    # মনে রাখবেন: holiday_map-টি get_holiday_map ফাংশনে {getdate(date): info} ফরম্যাটে থাকতে হবে।
+    from_date = getdate(filters.get("from_date"))
+    to_date = getdate(filters.get("to_date"))
 
+    # ১. এমপ্লয়ী ইনফো ম্যাপ তৈরি (যাতে ছুটির দিনে নাম/শিফট খালি না থাকে)
+    emp_info_map = {}
     for d in data:
-        # ১. অ্যাটেনডেন্স তারিখ সংগ্রহ (Date Object হিসেবে)
-        curr_date = getdate(d.attendance_date)
+        if d.employee not in emp_info_map:
+            emp_info_map[d.employee] = {
+                "employee_name": d.get("employee_name"),
+                "shift": d.get("shift"),
+                "shift_start": d.get("shift_start"),
+                "shift_end": d.get("shift_end"),
+                "department": d.get("department"),
+                "company": d.get("company"),
+                "holiday_list": d.get("holiday_list"),
+                "enable_late_entry_marking": d.get("enable_late_entry_marking"),
+                "late_entry_grace_period": d.get("late_entry_grace_period"),
+                "enable_early_exit_marking": d.get("enable_early_exit_marking"),
+                "early_exit_grace_period": d.get("early_exit_grace_period")
+            }
+
+    # ২. রিপোর্টে থাকা সব এমপ্লয়ীদের লিস্ট বের করা
+    if filters.get("employee"):
+        employees = [filters.get("employee")]
+    else:
+        employees = list(set([d.employee for d in data])) if data else []
+
+    # ৩. বিদ্যমান ডেটাকে ম্যাপ করা
+    attendance_map = {(d.employee, getdate(d.attendance_date)): d for d in data}
+
+    final_data = []
+
+    # ৪. প্রতিটি এমপ্লয়ীর জন্য ডেট রেঞ্জ লুপ
+    for emp in employees:
+        # এমপ্লয়ীর বেসিক তথ্য সংগ্রহ
+        info = emp_info_map.get(emp, {})
         
-        # ডিফল্ট ফ্ল্যাগ সেট করা (যা সামারিতে ব্যবহৃত হয়)
-        d.is_weekend_or_holiday = 0
-        
-        # ২. আপনার শেয়ার করা লজিক ইমপ্লিমেন্টেশন
-        # সরাসরি চেক করা হচ্ছে এই তারিখটি হলিডে ডিকশনারিতে আছে কি না
-        if curr_date in holiday_map:
-            h_info = holiday_map[curr_date]
+        curr_date = from_date
+        while curr_date <= to_date:
+            key = (emp, curr_date)
             
-            # যদি ছুটির দিনেও কেউ প্রেজেন্ট থাকে, তবে সেটি প্রেজেন্ট হিসেবেই দেখাবে
-            if d.status == "Present":
-                d.is_weekend_or_holiday = 0
-                d.status = _("Present")
+            if key in attendance_map:
+                d = copy.copy(attendance_map[key])
             else:
-                # অন্যথায় এটি উইকেন্ড অথবা হলিডে
-                d.is_weekend_or_holiday = 1
-                if h_info.weekly_off:
-                    d.status = _("Weekend")
+                # missing dates (Holiday/Absent) এর জন্য তথ্যসহ রো তৈরি
+                d = frappe._dict({
+                    "attendance_date": curr_date,
+                    "status": None,
+                    "employee": emp,
+                    "employee_name": info.get("employee_name"),
+                    "shift": info.get("shift"),
+                    "shift_start": info.get("shift_start"),
+                    "shift_end": info.get("shift_end"),
+                    "department": info.get("department"),
+                    "company": info.get("company"),
+                    "holiday_list": info.get("holiday_list"),
+                    "enable_late_entry_marking": info.get("enable_late_entry_marking"),
+                    "late_entry_grace_period": info.get("late_entry_grace_period"),
+                    "enable_early_exit_marking": info.get("enable_early_exit_marking"),
+                    "early_exit_grace_period": info.get("early_exit_grace_period"),
+                    "working_hours": 0,
+                    "in_time": None,
+                    "out_time": None
+                })
+
+            # ৫. হলিডে এবং স্ট্যাটাস লজিক
+            d.is_weekend_or_holiday = 0
+            if curr_date in holiday_map:
+                h_info = holiday_map[curr_date]
+                if d.status == "Present":
+                    d.is_weekend_or_holiday = 0
+                    d.status = _("Present")
                 else:
-                    d.status = _(h_info.description or "Holiday")
-        else:
-            # ৩. ছুটি না হলে ডাটাবেসের অরিজিনাল স্ট্যাটাস (Present/Absent/Half Day/Leave)
-            if not d.status:
-                d.status = _("Absent")
+                    d.is_weekend_or_holiday = 1
+                    d.status = _("Weekend") if h_info.weekly_off else _(h_info.description or "Holiday")
             else:
-                # স্ট্যাটাস স্ট্রিং হলে সেটাকে অনুবাদযোগ্য করা
-                d.status = _(str(d.status))
+                if not d.status:
+                    d.status = _("Absent")
+                else:
+                    d.status = _(str(d.status))
 
-        # ৪. কর্মঘণ্টা হিসাব (Total Working Hours)
-        total_seconds = 0
-        # অ্যাটেনডেন্স ডকটাইপে working_hours সাধারণত float হিসেবে থাকে (ঘণ্টা)
-        if d.working_hours and flt(d.working_hours) > 0:
-            total_seconds = flt(d.working_hours) * 3600
-        elif d.in_time and d.out_time:
-            try:
-                # ইন-টাইম এবং আউট-টাইম এর পার্থক্য বের করা
-                diff = d.out_time - d.in_time
-                total_seconds = diff.total_seconds()
-            except:
-                total_seconds = 0
-        
-        # রিপোর্টের জন্য float এবং HMS ফরম্যাট দুইটাই রাখা হচ্ছে
-        d.working_hours_float = total_seconds / 3600.0
-        d.working_hours = format_seconds_to_hms(total_seconds)
+            # ৬. কর্মঘণ্টা ও অন্যান্য ক্যালকুলেশন
+            total_seconds = 0
+            if d.working_hours and flt(d.working_hours) > 0:
+                total_seconds = flt(d.working_hours) * 3600
+            elif d.in_time and d.out_time:
+                try:
+                    diff = d.out_time - d.in_time
+                    total_seconds = diff.total_seconds()
+                except: total_seconds = 0
+            
+            d.working_hours_float = total_seconds / 3600.0
+            d.working_hours = format_seconds_to_hms(total_seconds)
 
-        # ৫. লেট এন্ট্রি এবং আর্লি এক্সিট আপডেট (গ্রেস পিরিয়ড সহ)
-        update_late_entry(d, consider_grace)
-        update_early_exit(d, consider_grace)
-        
-        # ৬. রিপোর্টের ভিউ ঠিক করার জন্য ডেট-টাইম থেকে শুধু টাইম ফরম্যাটিং
-        d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
-        d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
-    
-    return data
+            update_late_entry(d, consider_grace)
+            update_early_exit(d, consider_grace)
+            
+            # ৭. টাইম ফরম্যাটিং (নাম এবং শিফট এখন এখান থেকে সঠিক ফরম্যাটে যাবে)
+            d.in_time, d.out_time = convert_datetime_to_time_for_same_date(d.in_time, d.out_time)
+            d.shift_start, d.shift_end = convert_datetime_to_time_for_same_date(d.shift_start, d.shift_end)
+
+            final_data.append(d)
+            curr_date = add_days(curr_date, 1)
+
+    return final_data
 
 def get_report_summary(data):
     if not data: return []
-    t = p = l = a = e = hol = h = leave = 0
+    t = p = l = a = e = hol = h = leave = wfh = 0
     total_seconds = 0.0
     today = getdate(nowdate())
+    #frappe.msgprint(frappe.as_json(data))
 
     for d in data:
         att_date = getdate(d.get("attendance_date"))
@@ -202,6 +252,7 @@ def get_report_summary(data):
                 elif "half day" in status: h += 1
                 elif "on leave" in status: leave += 1
                 elif "absent" in status: a += 1
+                elif "work from home" in status: wfh += 1
 
             if d.get("late_entry"): l += 1
             if d.get("early_exit"): e += 1
@@ -216,6 +267,7 @@ def get_report_summary(data):
     return [
         {"value": t, "label": _("Total"), "indicator": "Blue", "datatype": "Int"},
         {"value": p, "label": _("Present"), "indicator": "Green", "datatype": "Int"},
+        {"value": wfh, "label": _("Home Office"), "indicator": "Green", "datatype": "Int"},
         {"value": l, "label": _("Late"), "indicator": "Red", "datatype": "Int"},
         {"value": a, "label": _("Absent"), "indicator": "Red", "datatype": "Int"},
         {"value": e, "label": _("Early"), "indicator": "Red", "datatype": "Int"},
