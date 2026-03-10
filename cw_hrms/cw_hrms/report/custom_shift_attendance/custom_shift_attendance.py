@@ -287,6 +287,7 @@ def get_report_summary(data):
     ]
 
 
+
 def get_chart_data(data):
     if not data: return None
     shifts = {}
