@@ -283,7 +283,7 @@ def get_report_summary(data):
         {"value": h, "label": _("Half Day"), "indicator": "Orange", "datatype": "Int"},
         {"value": leave, "label": _("Leave"), "indicator": "Yellow", "datatype": "Int"},
         {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"},
-        {"value": od, "label": _("OD Wh"), "indicator": "Blue", "datatype": "Data"}
+        {"value": od, "label": _("Out Duty"), "indicator": "Blue", "datatype": "Data"}
     ]
 
 
