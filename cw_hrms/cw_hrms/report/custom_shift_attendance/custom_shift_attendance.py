@@ -94,7 +94,7 @@ def get_query(filters):
         .left_join(shift_type).on(attendance.shift == shift_type.name)
         .left_join(employee).on(attendance.employee == employee.name)
         .select(
-            attendance.name, attendance.employee, attendance.employee_name,
+            attendance.name, attendance.employee, attendance.employee_name,attendance.attendance_request,
             attendance.shift, attendance.attendance_date, attendance.status,
             attendance.in_time, attendance.out_time, attendance.working_hours,
             attendance.late_entry, attendance.early_exit, attendance.department,
@@ -231,7 +231,7 @@ def update_data(data, filters, holiday_map):
 
 def get_report_summary(data):
     if not data: return []
-    t = p = l = a = e = hol = h = leave = wfh = 0
+    t = p = l = a = e = hol = h = leave = wfh = od  = 0
     total_seconds = 0.0
     today = getdate(nowdate())
     #frappe.msgprint(frappe.as_json(data))
@@ -245,14 +245,22 @@ def get_report_summary(data):
                 hol += 1
             else:
                 status = str(d.get("status") or "").lower()
+                att_req = d.get("attendance_request")
+                #frappe.msgprint(f"Date: {att_date}, Status: {status}, Req: {att_req}")
                 wh_seconds = flt(d.get("working_hours_float") or 0) * 3600
                 total_seconds += wh_seconds
-
-                if "present" in status: p += 1
+                
+                if "present" in status:
+                    p += 1
+                    
+                    # ২. আউট ডিউটি চেক: প্রেজেন্ট হওয়ার পাশাপাশি যদি রিকোয়েস্ট আইডি থাকে
+                    if att_req:
+                        od += 1
                 elif "half day" in status: h += 1
                 elif "on leave" in status: leave += 1
                 elif "absent" in status: a += 1
                 elif "work from home" in status: wfh += 1
+                
 
             if d.get("late_entry"): l += 1
             if d.get("early_exit"): e += 1
@@ -261,7 +269,7 @@ def get_report_summary(data):
     # if hol == 0 and t > 0:
     #     frappe.msgprint("<b>Summary Error:</b> Weekend/Holiday count is 0. Check 'is_weekend_or_holiday' flag in update_data loop.", alert=True)
 
-    working_days = p + h
+    working_days = p + h-od
     avg_wh = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"
 
     return [
@@ -274,8 +282,11 @@ def get_report_summary(data):
         {"value": hol, "label": _("Holiday"), "indicator": "Purple", "datatype": "Int"},
         {"value": h, "label": _("Half Day"), "indicator": "Orange", "datatype": "Int"},
         {"value": leave, "label": _("Leave"), "indicator": "Yellow", "datatype": "Int"},
-        {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"}
+        {"value": avg_wh, "label": _("Avg Wh"), "indicator": "Blue", "datatype": "Data"},
+        {"value": od, "label": _("OD Wh"), "indicator": "Blue", "datatype": "Data"}
     ]
+
+
 def get_chart_data(data):
     if not data: return None
     shifts = {}
