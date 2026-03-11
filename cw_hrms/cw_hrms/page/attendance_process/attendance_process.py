@@ -13,7 +13,7 @@ def process_attendance_re_sync(employees, from_date, to_date, shift=None):
 
     for emp_id in employees:
         try:
-            # ১. পুরাতন অ্যাটেনডেন্স খুঁজে বের করে ডিলিট করা
+            # ১. পুরাতন অ্যাটেনডেন্স ডিলিট করা
             attendances = frappe.get_all("Attendance", filters={
                 "employee": emp_id,
                 "attendance_date": ["between", [from_date, to_date]],
@@ -34,26 +34,34 @@ def process_attendance_re_sync(employees, from_date, to_date, shift=None):
                 AND DATE(time) BETWEEN %s AND %s
             """, (emp_id, from_date, to_date))
 
-            # ৩. অত্যন্ত গুরুত্বপূর্ণ: ডাটাবেস কমিট করা
-            # এটি না করলে process_auto_attendance আগের লিঙ্ক করা ডেটা দেখতে পাবে
+            # ৩. ডাটাবেস কমিট (যাতে প্রসেস ক্লীন ডাটা পায়)
             frappe.db.commit()
 
-            # ৪. শিফট টাইপের অরিজিনাল প্রসেস কল করা
-            if shift:
-                # যদি নির্দিষ্ট শিফট পাঠানো হয়
-                shift_doc = frappe.get_doc("Shift Type", shift)
-                
-                # এখানে একটি ছোট ট্রিক: process_auto_attendance ফিল্টার হিসেবে 
-                # 'process_attendance_after' ব্যবহার করে। সাময়িকভাবে সেটি পরিবর্তন করা।
-                original_after_date = shift_doc.process_attendance_after
-                shift_doc.process_attendance_after = from_date
-                
-                # শিফট টাইপের অরিজিনাল মেথড কল
-                shift_doc.process_auto_attendance(is_manually_triggered=True)
+            # ৪. চেক-ইন টেবিল থেকে ওই এমপ্লয়ির নির্দিষ্ট ডেট রেঞ্জের শিফটগুলো খুঁজে বের করা
+            checkin_shifts = frappe.get_all("Employee Checkin", 
+                filters={
+                    "employee": emp_id,
+                    "time": ["between", [from_date, to_date]],
+                    "shift": ["is", "set"]
+                }, 
+                fields=["shift"],
+                distinct=1 # ইউনিক শিফট গুলো নেবে
+            )
+
+            if checkin_shifts:
+                for row in checkin_shifts:
+                    current_shift = row.shift
+                    shift_doc = frappe.get_doc("Shift Type", current_shift)
+                    
+                    # সাময়িকভাবে process_attendance_after সেট করা
+                    shift_doc.process_attendance_after = from_date
+                    
+                    # ওই নির্দিষ্ট শিফটের জন্য অটো অ্যাটেনডেন্স কল করা
+                    shift_doc.process_auto_attendance(is_manually_triggered=True)
                 
                 success_count += 1
             else:
-                # যদি শিফট না থাকে, তবে এমপ্লয়ির ডিফল্ট শিফট থেকে প্রসেস করা
+                # যদি চেক-ইন টেবিলে কোনো শিফট না থাকে, তবে ব্যাকআপ হিসেবে ডিফল্ট শিফট
                 default_shift = frappe.db.get_value("Employee", emp_id, "default_shift")
                 if default_shift:
                     shift_doc = frappe.get_doc("Shift Type", default_shift)
@@ -68,5 +76,7 @@ def process_attendance_re_sync(employees, from_date, to_date, shift=None):
 
     return {
         "status": "success",
-        "message": _("Success: {0}, Errors: {1}").format(success_count, error_count)
+        "message": _("Processed {0} employees. Success: {1}, Errors: {2}").format(
+            len(employees), success_count, error_count
+        )
     }
