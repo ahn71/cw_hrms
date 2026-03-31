@@ -11,12 +11,14 @@ frappe.query_reports["Custom Shift Attendance"] = {
 			default: frappe.datetime.month_start(),
 		},
 		{
-			fieldname: "to_date",
-			label: __("To Date"),
-			fieldtype: "Date",
-			reqd: 1,
-			default: frappe.datetime.get_today(),
-		},
+            fieldname: "to_date",
+            label: __("To Date"),
+            fieldtype: "Date",
+            reqd: 1,
+            // আজকের তারিখ থেকে ১ দিন কম ডিফল্ট রাখা হয়েছে
+            default: frappe.datetime.add_days(frappe.datetime.get_today(), -1),
+            
+        },
 		{
 			fieldname: "employee",
 			label: __("Employee"),

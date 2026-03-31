@@ -61,6 +61,8 @@ def get_report_data(filters):
     if filters.get("employee"): conditions += f" AND att.employee = '{filters.get('employee')}'"
     if filters.get("company"): conditions += f" AND att.company = '{filters.get('company')}'"
     if filters.get("department"): conditions += f" AND att.department = '{filters.get('department')}'"
+    if filters.get("employee_status"):
+        conditions += f" AND emp.status = '{filters.get('employee_status')}'"
 
     # ১. এখানে employee.holiday_list-কেও সিলেক্ট করছি
     raw_data = frappe.db.sql(f"""
