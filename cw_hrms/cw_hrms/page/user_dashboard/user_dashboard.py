@@ -109,3 +109,68 @@ def get_user_stats():
         order_by="from_date desc")
 
     return data
+@frappe.whitelist()
+def get_yearly_attendance(year=None, employee=None):
+    user = frappe.session.user
+    
+    # যদি employee parameter না আসে তাহলে logged in user থেকে বের করো
+    if not employee:
+        employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    
+    # Admin হলে কিন্তু employee select না করলে খালি return
+    if not employee:
+        return []
+
+    if not year:
+        year = getdate(nowdate()).year
+
+    year = int(year)
+    year_start = f"{year}-01-01"
+    year_end = f"{year}-12-31"
+
+    records = frappe.get_all("Attendance",
+        filters={
+            "employee": employee,
+            "attendance_date": ["between", [year_start, year_end]],
+            "docstatus": 1
+        },
+        fields=["attendance_date", "status", "late_entry"]
+    )
+
+    monthly = {i: {"present": 0, "absent": 0, "leave": 0, "late": 0} for i in range(12)}
+
+    for a in records:
+        m = getdate(a.attendance_date).month - 1
+        s = (a.status or "").lower().replace(" ", "_")
+        if "present" in s:
+            monthly[m]["present"] += 1
+        elif "absent" in s:
+            monthly[m]["absent"] += 1
+        elif "leave" in s:
+            monthly[m]["leave"] += 1
+        if a.late_entry:
+            monthly[m]["late"] += 1
+
+    return [
+        {
+            "month": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i],
+            "present": monthly[i]["present"],
+            "absent":  monthly[i]["absent"],
+            "leave":   monthly[i]["leave"],
+            "late":    monthly[i]["late"]
+        }
+        for i in range(12)
+    ]
+
+
+@frappe.whitelist()
+def get_employee_list():
+    # শুধু System Manager বা HR Manager দেখতে পাবে
+    if "System Manager" not in frappe.get_roles() and "HR Manager" not in frappe.get_roles():
+        return []
+    
+    return frappe.get_all("Employee",
+        filters={"status": "Active"},
+        fields=["name", "employee_name"],
+        order_by="employee_name asc"
+    )

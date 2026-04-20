@@ -229,8 +229,147 @@ function render_dashboard_html(page, data) {
                         </tbody>
                     </table>
                 </div>
-            </div> </div> </div> `;
+            </div> </div> 
+            
+         <!-- Monthly Attendance Bar Chart -->
+        <div class="section" style="margin-top: 20px;">
+            <div class="sec-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span>📊 Monthly Attendance Chart</span>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <div id="emp-filter-wrap" style="display:none;">
+                        <select id="att-emp-filter" style="font-size:12px; padding:3px 8px; border-radius:6px; border:1px solid #ddd; cursor:pointer; min-width:160px;">
+                            <option value="">-- Select Employee --</option>
+                        </select>
+                    </div>
+                    <select id="att-year-filter" style="font-size:12px; padding:3px 8px; border-radius:6px; border:1px solid #ddd; cursor:pointer;">
+                        ${[2022,2023,2024,2025,2026].map(y =>
+                            `<option value="${y}" ${y == new Date().getFullYear() ? 'selected' : ''}>${y}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+            </div>
+            <div style="position:relative; width:100%; height:280px;">
+                <canvas id="attBarChart" role="img" aria-label="Monthly attendance bar chart"></canvas>
+            </div>
+        </div>
+
+            </div> `;
     page.main.html(html);
+
+    frappe.require(
+        'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js',
+        function() {
+            let chartInstance = null;
+            let isAdmin = false;
+            let currentEmployee = null;
+
+            // Admin কিনা check করো এবং সেই অনুযায়ী employee filter দেখাও
+            frappe.call({
+                method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_employee_list',
+                callback: function(r) {
+                    let employees = r.message || [];
+
+                    if (employees.length > 0) {
+                        // Admin — employee filter দেখাও
+                        isAdmin = true;
+                        let $wrap = document.getElementById('emp-filter-wrap');
+                        let $sel  = document.getElementById('att-emp-filter');
+
+                        employees.forEach(emp => {
+                            let opt = document.createElement('option');
+                            opt.value = emp.name;
+                            opt.textContent = `${emp.employee_name} (${emp.name})`;
+                            $sel.appendChild(opt);
+                        });
+
+                        $wrap.style.display = 'block';
+
+                        $sel.addEventListener('change', function() {
+                            currentEmployee = this.value || null;
+                            let year = parseInt(document.getElementById('att-year-filter').value);
+                            if (currentEmployee) renderChart(year, currentEmployee);
+                            else clearChart();
+                        });
+
+                    } else {
+                        // Normal employee — নিজের data সরাসরি দেখাও
+                        isAdmin = false;
+                        let year = parseInt(document.getElementById('att-year-filter').value);
+                        renderChart(year, null);
+                    }
+                }
+            });
+
+            // Year filter
+            document.getElementById('att-year-filter').addEventListener('change', function() {
+                let year = parseInt(this.value);
+                if (isAdmin && !currentEmployee) return; // admin কিন্তু employee select করেনি
+                renderChart(year, currentEmployee);
+            });
+
+            function clearChart() {
+                if (chartInstance) {
+                    chartInstance.destroy();
+                    chartInstance = null;
+                }
+            }
+
+            function renderChart(year, employee) {
+                frappe.call({
+                    method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_yearly_attendance',
+                    args: { year: year, employee: employee },
+                    callback: function(r) {
+                        if (!r.message || !r.message.length) {
+                            clearChart();
+                            return;
+                        }
+
+                        let rows    = r.message;
+                        let labels  = rows.map(d => d.month);
+                        let present = rows.map(d => d.present);
+                        let absent  = rows.map(d => d.absent);
+                        let leave   = rows.map(d => d.leave);
+                        let late    = rows.map(d => d.late);
+
+                        let ctx = document.getElementById('attBarChart').getContext('2d');
+                        if (chartInstance) chartInstance.destroy();
+
+                        chartInstance = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [
+                                    { label: 'Present', data: present, backgroundColor: '#38a169', stack: 's' },
+                                    { label: 'Absent',  data: absent,  backgroundColor: '#e53e3e', stack: 's' },
+                                    { label: 'Leave',   data: leave,   backgroundColor: '#d69e2e', stack: 's' },
+                                    { label: 'Late',    data: late,    backgroundColor: '#3182ce', stack: 's' }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: {
+                                        display: true,
+                                        position: 'top',
+                                        labels: { boxWidth: 12, font: { size: 12 } }
+                                    },
+                                    tooltip: { mode: 'index' }
+                                },
+                                scales: {
+                                    x: { stacked: true, grid: { display: false },
+                                         ticks: { font: { size: 11 } } },
+                                    y: { stacked: true, beginAtZero: true,
+                                         title: { display: true, text: 'Days', font: { size: 11 } },
+                                         ticks: { font: { size: 11 } } }
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+        }
+    );
 }
 
 function createStatCard(label, val, color) {
