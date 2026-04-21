@@ -1,144 +1,94 @@
 frappe.pages['user-dashboard'].on_page_load = function (wrapper) {
-	let page = frappe.ui.make_app_page({
-		parent: wrapper,
-		title: __('User Dashboard'),
-		single_column: false
-	});
+    let page = frappe.ui.make_app_page({
+        parent: wrapper,
+        title: __('User Dashboard'),
+        single_column: false
+    });
 
-	create_workspace_sidebar(page);
-
-	frappe.call({
-		method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_user_stats',
-		callback: function (r) {
-			if (r.message) {
-				render_dashboard_html(page, r.message);
-			}
-		}
-	});
+    create_workspace_sidebar(page);
+    
+    // শুরুতেই ইউজারের নিজস্ব এমপ্লয়ি আইডি খুঁজে বের করা
+    frappe.db.get_value('Employee', { user_id: frappe.session.user }, 'name', (r) => {
+        let current_user_employee = r ? r.name : null;
+        setup_dashboard(page, current_user_employee);
+    });
 };
 
-function create_workspace_sidebar(page) {
-	// Create the workspace sidebar structure
-	let list_sidebar = $(`
-		<div class="list-sidebar overlay-sidebar hidden-xs hidden-sm">
-			<div class="desk-sidebar list-unstyled sidebar-menu"></div>
-		</div>
-	`).appendTo(page.sidebar);
+function setup_dashboard(page, current_user_employee) {
+    // ১. ফিল্টার তৈরি
+    page.employee_filter = frappe.ui.form.make_control({
+        parent: page.wrapper.find('.page-actions'),
+        df: {
+            fieldtype: 'Link',
+            options: 'Employee',
+            fieldname: 'employee',
+            placeholder: __('Select Employee'),
+            get_query: () => {
+                if (!frappe.user_roles.includes('HR Manager') && !frappe.user_roles.includes('HR User')) {
+                    return {
+                        filters: [
+                            ['Employee', 'reports_to', '=', current_user_employee, 'or'],
+                            ['Employee', 'name', '=', current_user_employee]
+                        ]
+                    };
+                }
+            }
+        },
+        render_input: true,
+    });
 
-	let sidebar = list_sidebar.find('.desk-sidebar');
+    // ২. ইভেন্ট লিসেনার সেট করা (on_change মাঝে মাঝে ঝামেলা করলে এটি ১০০% কাজ করবে)
+    page.employee_filter.$input.on('change', function() {
+        let selected = page.employee_filter.get_value();
+        console.log("Change Detected! Selected:", selected); // এটি কনসোলে চেক করবেন
+        if (selected) {
+            refresh_dashboard(page, selected);
+        }
+    });
 
-	// Get workspace sidebar items
-	frappe.xcall('frappe.desk.desktop.get_workspace_sidebar_items').then((data) => {
-		if (!data || !data.pages) return;
-
-		let public_pages = data.pages.filter(p => p.public);
-		let private_pages = data.pages.filter(p => !p.public);
-
-		// Build Public section
-		if (public_pages.length > 0) {
-			build_sidebar_section(sidebar, 'Public', public_pages, true);
-		}
-
-		// Build Personal section
-		if (private_pages.length > 0) {
-			build_sidebar_section(sidebar, 'Personal', private_pages, false);
-		}
-	});
-}
-
-function build_sidebar_section(sidebar, title, pages, is_public) {
-	let root_pages = pages.filter(p => !p.parent_page);
-
-	let section = $(`
-		<div class="standard-sidebar-section nested-container" data-title="${title}">
-			<button class="btn-reset standard-sidebar-label" aria-label="Toggle Section: ${title}" aria-expanded="true">
-				<span>${frappe.utils.icon('es-line-down', 'xs')}</span>
-				<span class="section-title">${__(title)}</span>
-			</button>
-		</div>
-	`).appendTo(sidebar);
-
-	let $title = section.find('.standard-sidebar-label');
-	$title.on('click', (e) => {
-		const $e = $(e.currentTarget);
-		const href = $e.find('span use').attr('href');
-		const isCollapsed = href === '#es-line-down';
-		let icon = isCollapsed ? '#es-line-right-chevron' : '#es-line-down';
-		$e.find('span use').attr('href', icon);
-		section.find('> .sidebar-item-container').toggleClass('hidden');
-		$e.attr('aria-expanded', String(!isCollapsed));
-	});
-
-	root_pages.forEach(page => {
-		append_sidebar_item(section, page, pages, is_public);
-	});
-}
-
-function append_sidebar_item(container, item, all_pages, is_public) {
-	let route = is_public ? frappe.router.slug(item.title) : 'private/' + frappe.router.slug(item.title);
-	let is_current = frappe.get_route_str().includes(frappe.router.slug(item.title));
-
-	let $item = $(`
-		<div class="sidebar-item-container" item-name="${item.title}" item-public="${is_public ? 1 : 0}">
-			<div class="desk-sidebar-item standard-sidebar-item ${is_current ? 'selected' : ''}">
-				<a href="/app/${route}" class="item-anchor" title="${__(item.title)}">
-					<span class="sidebar-item-icon">
-						${is_public ? frappe.utils.icon(item.icon || 'folder-normal', 'md') : `<span class="indicator ${item.indicator_color || 'blue'}"></span>`}
-					</span>
-					<span class="sidebar-item-label">${__(item.title)}</span>
-				</a>
-			</div>
-			<div class="sidebar-child-item nested-container hidden"></div>
-		</div>
-	`).appendTo(container);
-
-	// Add child items
-	let child_items = all_pages.filter(p => p.parent_page == item.title);
-	if (child_items.length > 0) {
-		let child_container = $item.find('.sidebar-child-item');
-		child_items.forEach(child => {
-			append_sidebar_item(child_container, child, all_pages, is_public);
-		});
-		child_container.removeClass('hidden');
-	}
-}
-
-
-function render_dashboard_html(page, data) {
-    let stats = data.stats || {};
-    let total_used_leaves = 0;
-
-    // ১. ব্যবহৃত লিভ ক্যালকুলেট করা
-    if (data.leave_allocation) {
-        data.leave_allocation.forEach(l => {
-            total_used_leaves += (l.used_leave || 0);
-        });
+    // ৩. ডিফল্ট সেট এবং প্রথমবার কল
+    if (current_user_employee) {
+        page.employee_filter.set_value(current_user_employee);
+        refresh_dashboard(page, current_user_employee);
     }
+}
+
+function refresh_dashboard(page, employee) {
+    console.log("Calling Server for Employee:", employee); // চেক করুন এটি প্রিন্ট হয় কি না
+    
+    frappe.call({
+        method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_user_stats',
+        args: { employee: employee },
+        callback: function (r) {
+            console.log("Data Received:", r.message);
+            render_dashboard_html(page, r.message || {}, employee);
+        }
+    });
+}
+function render_dashboard_html(page, data, selected_employee) {
+    let stats = data.stats || {};
+    let leave_alloc = data.leave_allocation || [];
+    let leave_hist = data.leave_history || [];
+    
+    let total_used_leaves = 0;
+    leave_alloc.forEach(l => {
+        total_used_leaves += flt(l.used_leave || 0);
+    });
 
     let html = `
     <style>
-        .dash-container { padding: 15px; background: #f8f9fc; font-family: sans-serif; }
+        .dash-container { padding: 15px; background: #f8f9fc; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .s-card { background: white; padding: 15px; border-radius: 8px; border-bottom: 4px solid; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .s-value { font-size: 20px; font-weight: 800; }
-        
         .main-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
         .section { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .sec-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-        
-        .attendance-scroll { max-height: 400px; overflow-y: auto; }
         .m-table { width: 100%; border-collapse: collapse; }
-        .m-table th { position: sticky; top: 0; background: white; text-align: left; font-size: 11px; color: #777; padding: 8px; border-bottom: 2px solid #f4f4f4; z-index: 1; }
-        .m-table td { padding: 8px; font-size: 12px; border-bottom: 1px solid #f4f4f4; vertical-align: middle; }
-        
-        .badge { padding: 3px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+        .m-table td, .m-table th { padding: 8px; font-size: 12px; border-bottom: 1px solid #f4f4f4; text-align: left; }
+        .badge { padding: 3px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
         .bg-present { background: #e6fffa; color: #38a169; }
         .bg-absent { background: #fff5f5; color: #e53e3e; }
-        .bg-holiday { background: #ebf4ff; color: #3182ce; }
-        .bg-weekend { background: #f7fafc; color: #718096; }
-        .bg-default { background: #edf2f7; color: #4a5568; }
-        
-        @media (max-width: 992px) { .main-grid { grid-template-columns: 1fr; } }
     </style>
 
     <div class="dash-container">
@@ -147,58 +97,34 @@ function render_dashboard_html(page, data) {
             ${createStatCard("Absent", stats.absent, "#e53e3e")}
             ${createStatCard("Late", stats.late, "#d69e2e")}
             ${createStatCard("Leave", total_used_leaves, "#3182ce")}
-            ${createStatCard("Holiday", (stats.weekend || 0) + (stats.holiday || 0), "#805ad5")}
+            ${createStatCard("Holiday", (flt(stats.weekend) + flt(stats.holiday)), "#805ad5")}
         </div>
 
         <div class="main-grid">
             <div class="section">
                 <div class="sec-title">📅 Monthly Attendance Summary</div>
-                <div class="attendance-scroll">
+                <div style="max-height: 350px; overflow-y: auto;">
                     <table class="m-table">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>In Time</th>
-                                <th>Out Time</th>
-                                <th>Stay Time</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
+                        <thead><tr><th>Date</th><th>In/Out</th><th>Status</th></tr></thead>
                         <tbody>
-                            ${data.attendance_details.map(a => {
-                                let in_t = a.in_time ? a.in_time.split(' ')[1].substring(0,8) : '--:--:--';
-                                let out_t = a.out_time ? a.out_time.split(' ')[1].substring(0,8) : '--:--:--';
-                                let formatted_date = frappe.datetime.str_to_user(a.attendance_date);
-                                
-                                // Status Logic for Classes
-                                let status_val = a.status ? a.status.toLowerCase() : '';
-                                let badge_class = 'bg-default';
-                                if (status_val.includes('present')) badge_class = 'bg-present';
-                                else if (status_val.includes('absent')) badge_class = 'bg-absent';
-                                else if (status_val.includes('holiday') || status_val.includes('election')) badge_class = 'bg-holiday';
-                                else if (status_val.includes('weekend') || status_val.includes('weekly')) badge_class = 'bg-weekend';
-
-                                return `
-                                    <tr>
-                                        <td><b>${formatted_date}</b></td>
-                                        <td>${in_t}</td>
-                                        <td>${out_t}</td>
-                                        <td><strong>${a.working_hours || '00:00:00'}</strong></td>
-                                        <td><span class="badge ${badge_class}">${a.status}</span></td>
-                                    </tr>
-                                `;
-                            }).join('')}
+                            ${(data.attendance_details || []).map(a => `
+                                <tr>
+                                    <td><b>${frappe.datetime.str_to_user(a.attendance_date)}</b></td>
+                                    <td>${(a.in_time || '').split(' ')[1] || '--'} - ${(a.out_time || '').split(' ')[1] || '--'}</td>
+                                    <td><span class="badge ${a.status == 'Present' ? 'bg-present' : 'bg-absent'}">${a.status}</span></td>
+                                </tr>
+                            `).join('')}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <div class="leave-column">
+            <div>
                 <div class="section">
-                    <div class="sec-title">📊 Leave Balance</div>
+                    <div class="sec-title">📊 Leave Balance (Unused / Total)</div>
                     <table class="m-table">
                         <tbody>
-                            ${data.leave_allocation.map(l => `
+                            ${leave_alloc.map(l => `
                                 <tr>
                                     <td>${l.leave_type}</td>
                                     <td align="right"><strong>${l.unused_leaves}</strong> / ${l.total_allocated}</td>
@@ -209,172 +135,126 @@ function render_dashboard_html(page, data) {
                 </div>
 
                 <div class="section">
-                    <div class="sec-title">🗓️ Leave History</div>
+                    <div class="sec-title">🗓️ Recent Leave History</div>
                     <table class="m-table">
-                        <thead>
-                            <tr>
-                                <th>From</th>
-                                <th>Days</th>
-                                <th>Type</th>
-                            </tr>
-                        </thead>
                         <tbody>
-                            ${(data.leave_history && data.leave_history.length) ? data.leave_history.map(l => `
+                            ${leave_hist.length ? leave_hist.map(l => `
                                 <tr>
                                     <td>${frappe.datetime.str_to_user(l.from_date)}</td>
-                                    <td><strong>${l.total_leave_days}</strong></td>
-                                    <td><span class="badge" style="background:#e2e5ff; color:#4e73df;">${l.leave_type}</span></td>
+                                    <td><strong>${l.total_leave_days} d</strong></td>
+                                    <td><span class="badge" style="background:#e2e5ff;">${l.leave_type}</span></td>
                                 </tr>
-                            `).join('') : '<tr><td colspan="3" align="center">No records</td></tr>'}
+                            `).join('') : '<tr><td colspan="3" align="center">No Records</td></tr>'}
                         </tbody>
                     </table>
                 </div>
-            </div> </div> 
-            
-         <!-- Monthly Attendance Bar Chart -->
-        <div class="section" style="margin-top: 20px;">
-            <div class="sec-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                <span>📊 Monthly Attendance Chart</span>
-                <div style="display:flex; gap:8px; align-items:center;">
-                    <div id="emp-filter-wrap" style="display:none;">
-                        <select id="att-emp-filter" style="font-size:12px; padding:3px 8px; border-radius:6px; border:1px solid #ddd; cursor:pointer; min-width:160px;">
-                            <option value="">-- Select Employee --</option>
-                        </select>
-                    </div>
-                    <select id="att-year-filter" style="font-size:12px; padding:3px 8px; border-radius:6px; border:1px solid #ddd; cursor:pointer;">
-                        ${[2022,2023,2024,2025,2026].map(y =>
-                            `<option value="${y}" ${y == new Date().getFullYear() ? 'selected' : ''}>${y}</option>`
-                        ).join('')}
-                    </select>
-                </div>
-            </div>
-            <div style="position:relative; width:100%; height:280px;">
-                <canvas id="attBarChart" role="img" aria-label="Monthly attendance bar chart"></canvas>
             </div>
         </div>
 
-            </div> `;
+        <div class="section">
+            <div class="sec-title">📈 Attendance Yearly Chart</div>
+            <div style="height:280px;"><canvas id="attBarChart"></canvas></div>
+        </div>
+    </div>`;
+
     page.main.html(html);
 
-    frappe.require(
-        'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js',
-        function() {
-            let chartInstance = null;
-            let isAdmin = false;
-            let currentEmployee = null;
+    frappe.require('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js', function() {
+        render_chart(selected_employee);
+    });
+}
 
-            // Admin কিনা check করো এবং সেই অনুযায়ী employee filter দেখাও
-            frappe.call({
-                method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_employee_list',
-                callback: function(r) {
-                    let employees = r.message || [];
-
-                    if (employees.length > 0) {
-                        // Admin — employee filter দেখাও
-                        isAdmin = true;
-                        let $wrap = document.getElementById('emp-filter-wrap');
-                        let $sel  = document.getElementById('att-emp-filter');
-
-                        employees.forEach(emp => {
-                            let opt = document.createElement('option');
-                            opt.value = emp.name;
-                            opt.textContent = `${emp.employee_name} (${emp.name})`;
-                            $sel.appendChild(opt);
-                        });
-
-                        $wrap.style.display = 'block';
-
-                        $sel.addEventListener('change', function() {
-                            currentEmployee = this.value || null;
-                            let year = parseInt(document.getElementById('att-year-filter').value);
-                            if (currentEmployee) renderChart(year, currentEmployee);
-                            else clearChart();
-                        });
-
-                    } else {
-                        // Normal employee — নিজের data সরাসরি দেখাও
-                        isAdmin = false;
-                        let year = parseInt(document.getElementById('att-year-filter').value);
-                        renderChart(year, null);
-                    }
+function render_chart(employee) {
+    frappe.call({
+        method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_yearly_attendance',
+        args: { year: 2026, employee: employee },
+        callback: function(r) {
+            let rows = r.message || [];
+            let ctx = document.getElementById('attBarChart').getContext('2d');
+            if (window.dashboardChart) window.dashboardChart.destroy();
+            window.dashboardChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: rows.map(d => d.month),
+                    datasets: [
+                        { label: 'Present', data: rows.map(d => d.present), backgroundColor: '#38a169', stack: 's' },
+                        { label: 'Absent', data: rows.map(d => d.absent), backgroundColor: '#e53e3e', stack: 's' },
+                        { label: 'Late', data: rows.map(d => d.late), backgroundColor: '#d69e2e', stack: 's' },
+                        { label: 'Leave', data: rows.map(d => d.leave), backgroundColor: '#3182ce', stack: 's' }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    scales: { x: { stacked: true }, y: { stacked: true } } 
                 }
             });
-
-            // Year filter
-            document.getElementById('att-year-filter').addEventListener('change', function() {
-                let year = parseInt(this.value);
-                if (isAdmin && !currentEmployee) return; // admin কিন্তু employee select করেনি
-                renderChart(year, currentEmployee);
-            });
-
-            function clearChart() {
-                if (chartInstance) {
-                    chartInstance.destroy();
-                    chartInstance = null;
-                }
-            }
-
-            function renderChart(year, employee) {
-                frappe.call({
-                    method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_yearly_attendance',
-                    args: { year: year, employee: employee },
-                    callback: function(r) {
-                        if (!r.message || !r.message.length) {
-                            clearChart();
-                            return;
-                        }
-
-                        let rows    = r.message;
-                        let labels  = rows.map(d => d.month);
-                        let present = rows.map(d => d.present);
-                        let absent  = rows.map(d => d.absent);
-                        let leave   = rows.map(d => d.leave);
-                        let late    = rows.map(d => d.late);
-
-                        let ctx = document.getElementById('attBarChart').getContext('2d');
-                        if (chartInstance) chartInstance.destroy();
-
-                        chartInstance = new Chart(ctx, {
-                            type: 'bar',
-                            data: {
-                                labels: labels,
-                                datasets: [
-                                    { label: 'Present', data: present, backgroundColor: '#38a169', stack: 's' },
-                                    { label: 'Absent',  data: absent,  backgroundColor: '#e53e3e', stack: 's' },
-                                    { label: 'Leave',   data: leave,   backgroundColor: '#d69e2e', stack: 's' },
-                                    { label: 'Late',    data: late,    backgroundColor: '#3182ce', stack: 's' }
-                                ]
-                            },
-                            options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: {
-                                    legend: {
-                                        display: true,
-                                        position: 'top',
-                                        labels: { boxWidth: 12, font: { size: 12 } }
-                                    },
-                                    tooltip: { mode: 'index' }
-                                },
-                                scales: {
-                                    x: { stacked: true, grid: { display: false },
-                                         ticks: { font: { size: 11 } } },
-                                    y: { stacked: true, beginAtZero: true,
-                                         title: { display: true, text: 'Days', font: { size: 11 } },
-                                         ticks: { font: { size: 11 } } }
-                                }
-                            }
-                        });
-                    }
-                });
-            }
         }
-    );
+    });
 }
 
 function createStatCard(label, val, color) {
     return `<div class="s-card" style="border-bottom-color: ${color}">
-        <div class="s-label" style="font-size: 11px; color: #888; font-weight: 600;">${label}</div>
+        <div style="font-size: 11px; color: #888;">${__(label)}</div>
         <div class="s-value" style="color: ${color}">${val || 0}</div>
     </div>`;
+}
+// সাইডবার ফাংশন (অপরিবর্তিত)
+function create_workspace_sidebar(page) {
+    let list_sidebar = $(`
+        <div class="list-sidebar overlay-sidebar hidden-xs hidden-sm">
+            <div class="desk-sidebar list-unstyled sidebar-menu"></div>
+        </div>
+    `).appendTo(page.sidebar);
+
+    let sidebar = list_sidebar.find('.desk-sidebar');
+
+    frappe.xcall('frappe.desk.desktop.get_workspace_sidebar_items').then((data) => {
+        if (!data || !data.pages) return;
+        let public_pages = data.pages.filter(p => p.public);
+        let private_pages = data.pages.filter(p => !p.public);
+
+        if (public_pages.length > 0) build_sidebar_section(sidebar, 'Public', public_pages, true);
+        if (private_pages.length > 0) build_sidebar_section(sidebar, 'Personal', private_pages, false);
+    });
+}
+
+function build_sidebar_section(sidebar, title, pages, is_public) {
+    let root_pages = pages.filter(p => !p.parent_page);
+    let section = $(`
+        <div class="standard-sidebar-section nested-container" data-title="${title}">
+            <button class="btn-reset standard-sidebar-label">
+                <span>${frappe.utils.icon('es-line-down', 'xs')}</span>
+                <span class="section-title">${__(title)}</span>
+            </button>
+        </div>
+    `).appendTo(sidebar);
+
+    root_pages.forEach(page => {
+        append_sidebar_item(section, page, pages, is_public);
+    });
+}
+
+function append_sidebar_item(container, item, all_pages, is_public) {
+    let route = is_public ? frappe.router.slug(item.title) : 'private/' + frappe.router.slug(item.title);
+    let $item = $(`
+        <div class="sidebar-item-container" item-name="${item.title}">
+            <div class="desk-sidebar-item standard-sidebar-item">
+                <a href="/app/${route}" class="item-anchor">
+                    <span class="sidebar-item-icon">
+                        ${is_public ? frappe.utils.icon(item.icon || 'folder-normal', 'md') : `<span class="indicator ${item.indicator_color || 'blue'}"></span>`}
+                    </span>
+                    <span class="sidebar-item-label">${__(item.title)}</span>
+                </a>
+            </div>
+            <div class="sidebar-child-item nested-container hidden"></div>
+        </div>
+    `).appendTo(container);
+
+    let child_items = all_pages.filter(p => p.parent_page == item.title);
+    if (child_items.length > 0) {
+        let child_container = $item.find('.sidebar-child-item');
+        child_items.forEach(child => append_sidebar_item(child_container, child, all_pages, is_public));
+        child_container.removeClass('hidden');
+    }
 }

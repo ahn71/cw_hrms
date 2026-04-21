@@ -2,14 +2,16 @@ import frappe
 from frappe.utils import nowdate, get_first_day, getdate, add_days, flt
 
 @frappe.whitelist()
-def get_user_stats():
+def get_user_stats(employee=None):
     user = frappe.session.user
+    if not employee:
+        employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
     # এমপ্লয়ি প্রোফাইল সংগ্রহ
     employee_doc = frappe.db.get_value("Employee", {"user_id": user}, ["name", "company", "holiday_list"], as_dict=True)
     
     if not employee_doc:
         return {"stats": {}, "attendance_details": [], "leave_allocation": [], "leave_history": []}
-
+    
     employee = employee_doc.name
     today = getdate(nowdate())
     yesterday = add_days(today, -1) 
@@ -101,6 +103,7 @@ def get_user_stats():
             "used_leave":flt(used_leaves)
         })
     data["leave_allocation"] = leave_data
+    frappe.msgprint(str(data["leave_allocation"]))
 
     # ৫. লিভ হিস্ট্রি সংগ্রহ
     data["leave_history"] = frappe.get_all("Leave Application",
