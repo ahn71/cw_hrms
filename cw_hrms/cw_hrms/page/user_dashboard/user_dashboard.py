@@ -103,7 +103,7 @@ def get_user_stats(employee=None):
             "used_leave":flt(used_leaves)
         })
     data["leave_allocation"] = leave_data
-    frappe.msgprint(str(data["leave_allocation"]))
+    #frappe.msgprint(str(data["leave_allocation"]))
 
     # ৫. লিভ হিস্ট্রি সংগ্রহ
     data["leave_history"] = frappe.get_all("Leave Application",
