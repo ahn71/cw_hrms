@@ -208,7 +208,7 @@ function render_full_dashboard(page, data, selected_employee) {
     // Year filter event
     page.wrapper.find('#yearSelect').on('change', function() {
         let selected_year = parseInt($(this).val());
-        page.wrapper.find('#chartTitle').text(`📈 Attendance Yearly Chart - ${selected_year}`);
+        page.wrapper.find('#chartTitle').text(`📈 Attendance Overview - ${selected_year}`);
         render_chart(selected_employee, selected_year);
     });
 
