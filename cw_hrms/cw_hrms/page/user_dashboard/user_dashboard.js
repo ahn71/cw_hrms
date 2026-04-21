@@ -5,55 +5,66 @@ frappe.pages['user-dashboard'].on_page_load = function (wrapper) {
         single_column: false
     });
 
-    // ড্যাশবোর্ডের মূল কন্টেইনার একবার তৈরি করে রাখা
     page.main.html('<div id="dashboard-root"></div>');
     
     create_workspace_sidebar(page);
     
     frappe.db.get_value('Employee', { user_id: frappe.session.user }, 'name', (r) => {
         let current_user_employee = r ? r.name : null;
-        setup_dashboard(page, current_user_employee);
+        setup_employee_filter(page, current_user_employee);
     });
 };
 
-function setup_dashboard(page, current_user_employee) {
-    page.employee_filter = page.add_field({
-        fieldname: 'employee',
-        label: __('Employee'),
-        fieldtype: 'Link',
-        options: 'Employee',
-        default: current_user_employee,
-        get_query: () => {
-            if (!frappe.user_roles.includes('HR Manager') && !frappe.user_roles.includes('HR User')) {
-                return {
-                    filters: [['Employee', 'reports_to', '=', current_user_employee, 'or'], ['Employee', 'name', '=', current_user_employee]]
-                };
+function setup_employee_filter(page, current_user_employee) {
+    page.employee_filter = frappe.ui.form.make_control({
+        parent: page.wrapper.find('.page-actions'),
+        df: {
+            fieldtype: 'Link',
+            options: 'Employee',
+            fieldname: 'employee',
+            placeholder: __('Select Employee'),
+            get_query: () => {
+                if (!frappe.user_roles.includes('HR Manager') && !frappe.user_roles.includes('HR User')) {
+                    return {
+                        filters: [
+                            ['Employee', 'reports_to', '=', current_user_employee, 'or'],
+                            ['Employee', 'name', '=', current_user_employee]
+                        ]
+                    };
+                }
             }
         },
-        change: () => {
-            let selected = page.employee_filter.get_value();
-            if (selected) refresh_dashboard(page, selected);
-        }
+        render_input: true,
     });
 
-    refresh_dashboard(page, current_user_employee);
+    // on_change এর বদলে DOM event — বেশি reliable
+    page.employee_filter.$input.on('change', function() {
+        let selected = page.employee_filter.get_value();
+        if (selected) refresh_dashboard_data(page, selected);
+    });
+
+    if (current_user_employee) {
+        page.employee_filter.set_value(current_user_employee);
+        refresh_dashboard_data(page, current_user_employee);
+    }
 }
 
-function refresh_dashboard(page, employee) {
-    if(!employee) return;
+function refresh_dashboard_data(page, employee) {
+    frappe.dom.freeze(__('Loading...'));
     
     frappe.call({
         method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_user_stats',
         args: { employee: employee },
         callback: function (r) {
+            frappe.dom.unfreeze();
             if (r.message) {
-                render_dashboard_html(page, r.message, employee);
+                render_full_dashboard(page, r.message, employee);
             }
         }
     });
 }
 
-function render_dashboard_html(page, data, selected_employee) {
+function render_full_dashboard(page, data, selected_employee) {
     let stats = data.stats || {};
     let leave_alloc = data.leave_allocation || [];
     let leave_hist = data.leave_history || [];
@@ -76,6 +87,9 @@ function render_dashboard_html(page, data, selected_employee) {
         .bg-present { background: #e6fffa; color: #38a169; }
         .bg-absent { background: #fff5f5; color: #e53e3e; }
         .bg-late { background: #fffaf0; color: #d69e2e; border: 1px solid #fbd38d; }
+        .bg-leave { background: #ebf8ff; color: #3182ce; }
+        .bg-holiday { background: #faf5ff; color: #805ad5; }
+        .bg-weekend { background: #f0fff4; color: #276749; }
     </style>
 
     <div class="dash-container">
@@ -92,17 +106,22 @@ function render_dashboard_html(page, data, selected_employee) {
                 <div class="sec-title">📅 Monthly Attendance Summary</div>
                 <div style="max-height: 400px; overflow-y: auto;">
                     <table class="m-table">
-                        <thead><tr><th>Date</th><th>In/Out</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Date</th><th>In/Out</th><th>Working Hours</th><th>Status</th></tr></thead>
                         <tbody>
                             ${(data.attendance_details || []).map(a => {
                                 let status = a.status;
-                                let color_class = (status === "Present") ? "bg-present" : "bg-absent";
-                                if (status === "Present" && (flt(a.late_entry) > 0 || a.is_late)) {
-                                    status = "Late"; color_class = "bg-late";
-                                }
+                                let color_class = "bg-absent";
+
+                                if (status === "Present") color_class = "bg-present";
+                                else if (status === "Late") color_class = "bg-late";
+                                else if (status === "On Leave") color_class = "bg-leave";
+                                else if (status === "Holiday") color_class = "bg-holiday";
+                                else if (status === "Weekend") color_class = "bg-weekend";
+
                                 return `<tr>
                                     <td><b>${frappe.datetime.str_to_user(a.attendance_date)}</b></td>
                                     <td>${(a.in_time || '').split(' ')[1] || '--'} - ${(a.out_time || '').split(' ')[1] || '--'}</td>
+                                    <td>${a.working_hours || '--'}</td>
                                     <td><span class="badge ${color_class}">${__(status)}</span></td>
                                 </tr>`;
                             }).join('')}
@@ -113,12 +132,15 @@ function render_dashboard_html(page, data, selected_employee) {
 
             <div>
                 <div class="section">
-                    <div class="sec-title">📊 Leave Balance</div>
+                    <div class="sec-title">📊 Leave Balance (Unused / Total)</div>
                     <table class="m-table">
                         <tbody>
-                            ${leave_alloc.map(l => `
-                                <tr><td>${__(l.leave_type)}</td><td align="right"><strong>${l.unused_leaves}</strong> / ${l.total_allocated}</td></tr>
-                            `).join('')}
+                            ${leave_alloc.length ? leave_alloc.map(l => `
+                                <tr>
+                                    <td>${l.leave_type}</td>
+                                    <td align="right"><strong>${l.unused_leaves}</strong> / ${l.total_allocated}</td>
+                                </tr>
+                            `).join('') : '<tr><td colspan="2" align="center">No Records</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -131,9 +153,9 @@ function render_dashboard_html(page, data, selected_employee) {
                                 <tr>
                                     <td>${frappe.datetime.str_to_user(l.from_date)}</td>
                                     <td><strong>${l.total_leave_days} d</strong></td>
-                                    <td><span class="badge" style="background:#e2e5ff; color:#5e72e4;">${__(l.leave_type)}</span></td>
+                                    <td><span class="badge" style="background:#e2e5ff; color:#5e72e4;">${l.leave_type}</span></td>
                                 </tr>
-                            `).join('') : '<tr><td colspan="3" align="center">No Records Found</td></tr>'}
+                            `).join('') : '<tr><td colspan="3" align="center">No Records</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -146,7 +168,6 @@ function render_dashboard_html(page, data, selected_employee) {
         </div>
     </div>`;
 
-    // মূল কন্টেইনারের ভেতর ডাটা পুশ করা (এটি ওভাররাইট করবে)
     page.wrapper.find('#dashboard-root').html(html);
 
     frappe.require('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js', function() {
@@ -157,13 +178,12 @@ function render_dashboard_html(page, data, selected_employee) {
 function render_chart(employee) {
     frappe.call({
         method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_yearly_attendance',
-        args: { year: 2026, employee: employee },
+        args: { year: new Date().getFullYear(), employee: employee },
         callback: function(r) {
             let rows = r.message || [];
             let canvas = document.getElementById('attBarChart');
-            if(!canvas) return;
+            if (!canvas) return;
             let ctx = canvas.getContext('2d');
-            
             if (window.dashboardChart) window.dashboardChart.destroy();
             window.dashboardChart = new Chart(ctx, {
                 type: 'bar',
@@ -171,15 +191,18 @@ function render_chart(employee) {
                     labels: rows.map(d => d.month),
                     datasets: [
                         { label: 'Present', data: rows.map(d => d.present), backgroundColor: '#38a169', stack: 's' },
-                        { label: 'Absent', data: rows.map(d => d.absent), backgroundColor: '#e53e3e', stack: 's' },
-                        { label: 'Late', data: rows.map(d => d.late), backgroundColor: '#d69e2e', stack: 's' },
-                        { label: 'Leave', data: rows.map(d => d.leave), backgroundColor: '#3182ce', stack: 's' }
+                        { label: 'Absent',  data: rows.map(d => d.absent),  backgroundColor: '#e53e3e', stack: 's' },
+                        { label: 'Late',    data: rows.map(d => d.late),    backgroundColor: '#d69e2e', stack: 's' },
+                        { label: 'Leave',   data: rows.map(d => d.leave),   backgroundColor: '#3182ce', stack: 's' }
                     ]
                 },
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
-                    scales: { x: { stacked: true }, y: { stacked: true } } 
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true }
+                    }
                 }
             });
         }
@@ -192,7 +215,8 @@ function createStatCard(label, val, color) {
         <div class="s-value" style="color: ${color}">${val || 0}</div>
     </div>`;
 }
-// সাইডবার ফাংশন (অপরিবর্তিত)
+
+// সাইডবার ফাংশন
 function create_workspace_sidebar(page) {
     let list_sidebar = $(`
         <div class="list-sidebar overlay-sidebar hidden-xs hidden-sm">
@@ -235,7 +259,9 @@ function append_sidebar_item(container, item, all_pages, is_public) {
             <div class="desk-sidebar-item standard-sidebar-item">
                 <a href="/app/${route}" class="item-anchor">
                     <span class="sidebar-item-icon">
-                        ${is_public ? frappe.utils.icon(item.icon || 'folder-normal', 'md') : `<span class="indicator ${item.indicator_color || 'blue'}"></span>`}
+                        ${is_public
+                            ? frappe.utils.icon(item.icon || 'folder-normal', 'md')
+                            : `<span class="indicator ${item.indicator_color || 'blue'}"></span>`}
                     </span>
                     <span class="sidebar-item-label">${__(item.title)}</span>
                 </a>
