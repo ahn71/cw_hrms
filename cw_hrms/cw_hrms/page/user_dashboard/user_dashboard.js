@@ -37,7 +37,13 @@ function setup_employee_filter(page, current_user_employee) {
         render_input: true,
     });
 
-    // on_change এর বদলে DOM event — বেশি reliable
+    // Dropdown থেকে select করলে সাথে সাথে fire হয়
+    page.employee_filter.$input.on('awesomplete-selectcomplete', function() {
+        let selected = page.employee_filter.get_value();
+        if (selected) refresh_dashboard_data(page, selected);
+    });
+
+    // Manually type করে Enter বা blur করলে
     page.employee_filter.$input.on('change', function() {
         let selected = page.employee_filter.get_value();
         if (selected) refresh_dashboard_data(page, selected);
@@ -72,6 +78,11 @@ function render_full_dashboard(page, data, selected_employee) {
     let total_used_leaves = 0;
     leave_alloc.forEach(l => { total_used_leaves += flt(l.used_leave || 0); });
 
+    let current_year = new Date().getFullYear();
+    let year_options = Array.from({length: 5}, (_, i) => current_year - i)
+        .map(y => `<option value="${y}" ${y === current_year ? 'selected' : ''}>${y}</option>`)
+        .join('');
+
     let html = `
     <style>
         .dash-container { padding: 15px; background: #f8f9fc; }
@@ -90,9 +101,13 @@ function render_full_dashboard(page, data, selected_employee) {
         .bg-leave { background: #ebf8ff; color: #3182ce; }
         .bg-holiday { background: #faf5ff; color: #805ad5; }
         .bg-weekend { background: #f0fff4; color: #276749; }
+        .year-select { border: 1px solid #ddd; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #555; cursor: pointer; outline: none; }
+        .year-select:hover { border-color: #aaa; }
     </style>
 
     <div class="dash-container">
+
+        <!-- Stat Cards -->
         <div class="stat-grid">
             ${createStatCard("Present", stats.present, "#38a169")}
             ${createStatCard("Absent", stats.absent, "#e53e3e")}
@@ -101,22 +116,32 @@ function render_full_dashboard(page, data, selected_employee) {
             ${createStatCard("Holiday", (flt(stats.weekend) + flt(stats.holiday)), "#805ad5")}
         </div>
 
+        <!-- Main Grid -->
         <div class="main-grid">
+
+            <!-- Monthly Attendance Table -->
             <div class="section">
-                <div class="sec-title">📅 Monthly Attendance Summary</div>
+                <div class="sec-title">📅 Attendance Status (This Month)</div>
                 <div style="max-height: 400px; overflow-y: auto;">
                     <table class="m-table">
-                        <thead><tr><th>Date</th><th>In/Out</th><th>Working Hours</th><th>Status</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>In / Out</th>
+                                <th>Working Hours</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
                         <tbody>
                             ${(data.attendance_details || []).map(a => {
                                 let status = a.status;
                                 let color_class = "bg-absent";
 
-                                if (status === "Present") color_class = "bg-present";
-                                else if (status === "Late") color_class = "bg-late";
+                                if (status === "Present")       color_class = "bg-present";
+                                else if (status === "Late")     color_class = "bg-late";
                                 else if (status === "On Leave") color_class = "bg-leave";
-                                else if (status === "Holiday") color_class = "bg-holiday";
-                                else if (status === "Weekend") color_class = "bg-weekend";
+                                else if (status === "Holiday")  color_class = "bg-holiday";
+                                else if (status === "Weekend")  color_class = "bg-weekend";
 
                                 return `<tr>
                                     <td><b>${frappe.datetime.str_to_user(a.attendance_date)}</b></td>
@@ -130,7 +155,9 @@ function render_full_dashboard(page, data, selected_employee) {
                 </div>
             </div>
 
+            <!-- Right Side -->
             <div>
+                <!-- Leave Balance -->
                 <div class="section">
                     <div class="sec-title">📊 Leave Balance (Unused / Total)</div>
                     <table class="m-table">
@@ -145,6 +172,7 @@ function render_full_dashboard(page, data, selected_employee) {
                     </table>
                 </div>
 
+                <!-- Leave History -->
                 <div class="section">
                     <div class="sec-title">🗓️ Recent Leave History</div>
                     <table class="m-table">
@@ -162,23 +190,37 @@ function render_full_dashboard(page, data, selected_employee) {
             </div>
         </div>
 
+        <!-- Yearly Chart -->
         <div class="section">
-            <div class="sec-title">📈 Attendance Yearly Chart</div>
+            <div class="sec-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span id="chartTitle">📈 Attendance Overview - ${current_year}</span>
+                <select id="yearSelect" class="year-select">
+                    ${year_options}
+                </select>
+            </div>
             <div style="height:280px;"><canvas id="attBarChart"></canvas></div>
         </div>
+
     </div>`;
 
     page.wrapper.find('#dashboard-root').html(html);
 
+    // Year filter event
+    page.wrapper.find('#yearSelect').on('change', function() {
+        let selected_year = parseInt($(this).val());
+        page.wrapper.find('#chartTitle').text(`📈 Attendance Yearly Chart - ${selected_year}`);
+        render_chart(selected_employee, selected_year);
+    });
+
     frappe.require('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js', function() {
-        render_chart(selected_employee);
+        render_chart(selected_employee, current_year);
     });
 }
 
-function render_chart(employee) {
+function render_chart(employee, year) {
     frappe.call({
         method: 'cw_hrms.cw_hrms.page.user_dashboard.user_dashboard.get_yearly_attendance',
-        args: { year: new Date().getFullYear(), employee: employee },
+        args: { year: year || new Date().getFullYear(), employee: employee },
         callback: function(r) {
             let rows = r.message || [];
             let canvas = document.getElementById('attBarChart');
@@ -202,6 +244,25 @@ function render_chart(employee) {
                     scales: {
                         x: { stacked: true },
                         y: { stacked: true, beginAtZero: true }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let dataIndex = context.dataIndex;
+                                    let present = rows[dataIndex].present || 0;
+                                    let absent  = rows[dataIndex].absent  || 0;
+                                    let late    = rows[dataIndex].late    || 0;
+                                    let leave   = rows[dataIndex].leave   || 0;
+                                    let total   = present + absent + late + leave;
+
+                                    let value   = context.parsed.y || 0;
+                                    let percent = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+
+                                    return ` ${context.dataset.label}: ${value} (${percent}%)`;
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -228,10 +289,10 @@ function create_workspace_sidebar(page) {
 
     frappe.xcall('frappe.desk.desktop.get_workspace_sidebar_items').then((data) => {
         if (!data || !data.pages) return;
-        let public_pages = data.pages.filter(p => p.public);
+        let public_pages  = data.pages.filter(p => p.public);
         let private_pages = data.pages.filter(p => !p.public);
 
-        if (public_pages.length > 0) build_sidebar_section(sidebar, 'Public', public_pages, true);
+        if (public_pages.length > 0)  build_sidebar_section(sidebar, 'Public',   public_pages,  true);
         if (private_pages.length > 0) build_sidebar_section(sidebar, 'Personal', private_pages, false);
     });
 }
@@ -253,7 +314,10 @@ function build_sidebar_section(sidebar, title, pages, is_public) {
 }
 
 function append_sidebar_item(container, item, all_pages, is_public) {
-    let route = is_public ? frappe.router.slug(item.title) : 'private/' + frappe.router.slug(item.title);
+    let route = is_public
+        ? frappe.router.slug(item.title)
+        : 'private/' + frappe.router.slug(item.title);
+
     let $item = $(`
         <div class="sidebar-item-container" item-name="${item.title}">
             <div class="desk-sidebar-item standard-sidebar-item">

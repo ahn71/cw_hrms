@@ -157,11 +157,66 @@ def get_yearly_attendance(year=None, employee=None):
     year_start = getdate(f"{year}-01-01")
     year_end = getdate(f"{year}-12-31")
 
-    # Attendance যা আছে সেগুলো আনো
+    # Future year হলে সব 0
+    if year_start > today:
+        return [
+            {
+                "month": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i],
+                "present": 0, "absent": 0, "leave": 0, "late": 0
+            }
+            for i in range(12)
+        ]
+
+    # Employee info আনো
+    employee_doc = frappe.db.get_value("Employee", {"name": employee},
+        ["company", "holiday_list", "date_of_joining", "relieving_date"], as_dict=True)
+
+    if not employee_doc:
+        return []
+
+    # এই employee এর সর্বপ্রথম attendance record কোনদিন
+    first_attendance = frappe.db.get_value("Attendance",
+        {"employee": employee, "docstatus": 1},
+        "min(attendance_date)")
+
+    joining_date = getdate(employee_doc.date_of_joining) if employee_doc.date_of_joining else None
+    first_att_date = getdate(first_attendance) if first_attendance else None
+
+    # loop_start নির্ধারণ — তিনটার মধ্যে সবচেয়ে কার্যকর তারিখ
+    # joining date আর first attendance date এর মধ্যে যেটা পরে সেটা নাও
+    # তারপর সেটা year_start এর সাথে তুলনা করে যেটা পরে সেটা নাও
+    if first_att_date and joining_date:
+        effective_start = max(joining_date, first_att_date)
+    elif first_att_date:
+        effective_start = first_att_date
+    elif joining_date:
+        effective_start = joining_date
+    else:
+        effective_start = year_start
+
+    loop_start = max(year_start, effective_start)
+
+    # loop_end নির্ধারণ
+    relieving_date = getdate(employee_doc.relieving_date) if employee_doc.relieving_date else None
+    loop_end = min(yesterday, year_end)
+    if relieving_date:
+        loop_end = min(loop_end, relieving_date)
+
+    # Selected year এ কোনো কার্যকর দিন নেই
+    if loop_start > loop_end:
+        return [
+            {
+                "month": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i],
+                "present": 0, "absent": 0, "leave": 0, "late": 0
+            }
+            for i in range(12)
+        ]
+
+    # Attendance আনো
     records = frappe.get_all("Attendance",
         filters={
             "employee": employee,
-            "attendance_date": ["between", [year_start, year_end]],
+            "attendance_date": ["between", [loop_start, loop_end]],
             "docstatus": 1
         },
         fields=["attendance_date", "status", "late_entry"]
@@ -169,29 +224,23 @@ def get_yearly_attendance(year=None, employee=None):
     att_dict = {getdate(a.attendance_date): a for a in records}
 
     # Holiday আনো
-    employee_doc = frappe.db.get_value("Employee", {"name": employee}, ["company", "holiday_list"], as_dict=True)
-    h_list = None
-    if employee_doc:
-        h_list = employee_doc.holiday_list or frappe.db.get_value("Company", employee_doc.company, "default_holiday_list")
+    h_list = employee_doc.holiday_list or frappe.db.get_value("Company", employee_doc.company, "default_holiday_list")
 
     holiday_set = set()
     if h_list:
         holidays = frappe.db.sql("""SELECT holiday_date FROM `tabHoliday`
                                     WHERE parent = %s AND holiday_date BETWEEN %s AND %s""",
-                                 (h_list, year_start, year_end), as_dict=True)
+                                 (h_list, loop_start, loop_end), as_dict=True)
         holiday_set = {getdate(h.holiday_date) for h in holidays}
 
     monthly = {i: {"present": 0, "absent": 0, "leave": 0, "late": 0} for i in range(12)}
 
-    # Loop করে প্রতিটা দিন check করো
-    curr_date = year_start
-    while curr_date <= min(yesterday, year_end):
+    curr_date = loop_start
+    while curr_date <= loop_end:
         m = curr_date.month - 1
 
         if curr_date in holiday_set:
-            # Holiday/Weekend — absent count নয়
             if curr_date in att_dict and att_dict[curr_date].status == "Present":
-                # Holiday তে present আসলে present count
                 monthly[m]["present"] += 1
                 if att_dict[curr_date].late_entry:
                     monthly[m]["late"] += 1
@@ -211,7 +260,6 @@ def get_yearly_attendance(year=None, employee=None):
                 monthly[m]["late"] += 1
 
         else:
-            # কোনো record নেই = Absent
             monthly[m]["absent"] += 1
 
         curr_date = add_days(curr_date, 1)
@@ -226,7 +274,6 @@ def get_yearly_attendance(year=None, employee=None):
         }
         for i in range(12)
     ]
-
 @frappe.whitelist()
 def get_employee_list():
     if "System Manager" not in frappe.get_roles() and "HR Manager" not in frappe.get_roles():
