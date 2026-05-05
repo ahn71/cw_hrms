@@ -1,88 +1,101 @@
-frappe.query_reports["ItemWiseStockValueV1"] = {
-    "filters": [
-        {
-            "fieldname": "company",
-            "label": __("Company"),
-            "fieldtype": "Link",
-            "options": "Company",
-            "default": frappe.defaults.get_user_default("Company")
-        },
-        {
-            "fieldname": "warehouse",
-            "label": __("Warehouse"),
-            "fieldtype": "Link",
-            "options": "Warehouse"
-        },
-        {
-            "fieldname": "item_code",
-            "label": __("Item"),
-            "fieldtype": "Link",
-            "options": "Item"
-        }
-    ],
-    "show_total_row": true,
+frappe.query_reports["itemwisestockvaluev1"] = {
+	"filters": [
+		{
+			"fieldname": "company",
+			"label": __("Company"),
+			"fieldtype": "Link",
+			"options": "Company",
+			"default": frappe.defaults.get_user_default("Company")
+		},
+		{
+			"fieldname": "warehouse",
+			"label": __("Warehouse"),
+			"fieldtype": "Link",
+			"options": "Warehouse"
+		},
+		{
+			"fieldname": "item_code",
+			"label": __("Item"),
+			"fieldtype": "Link",
+			"options": "Item"
+		}
+	],
+	"show_total_row": true,
 
-    // ডাটা কমানো ছাড়া চেকবক্স অ্যাড করার সঠিক নিয়ম
-    "get_datatable_options": function(options) {
-        return Object.assign(options, {
-            checkboxColumn: true,
-        });
-    },
+	"onload": function(report) {
 
-    "onload": function(report) {
-        // ১. পেজ টোটাল বাটন (আপনার আগের লজিক অনুযায়ী)
-        report.page.add_inner_button(__("Calculate Page Total"), function() {
-            let total_qty = 0;
-            let total_value = 0;
+		// ✅ report.refresh original function কে wrap করা
+		const original_refresh = report.refresh.bind(report);
+		report.refresh = function() {
+			original_refresh();
+			setTimeout(() => inject_checkboxes(), 1500);
+		};
 
-            const visible_rows = report.datatable.rowmanager.getRows();
-            
-            visible_rows.forEach(row => {
-                // ইনডেক্স ৩ এ Qty এবং ৫ এ Value (যেহেতু চেকবক্স একটা কলাম দখল করে নিয়েছে)
-                total_qty += flt(row[3].content); 
-                total_value += flt(row[5].content);
-            });
+		// ✅ Export Selected
+		report.page.add_inner_button(__("Export Selected"), function() {
+			const checked = document.querySelectorAll('.row-cb:checked');
 
-            frappe.msgprint(__('<b>Current Page Summary:</b> <br> Total Qty: {0} <br> Total Value: {1}', [total_qty, total_value]));
-        });
+			if (checked.length === 0) {
+				frappe.msgprint(__("কোনো row সিলেক্ট করা হয়নি।"));
+				return;
+			}
 
-        // ২. আপনার চাহিদামত সিলেক্টেড রো এক্সপোর্ট করার বাটন
-        report.page.add_inner_button(__("Export Selected"), function() {
-            const datatable = report.datatable;
-            const selected_indices = datatable.rowmanager.getSelectedRowIndices();
-            
-            if (selected_indices.length === 0) {
-                frappe.msgprint(__("দয়া করে বামপাশের চেকবক্স থেকে আইটেম সিলেক্ট করুন।"));
-                return;
-            }
+			const real_data = (report.data || []).filter(r => r.variant !== "Total");
+			let export_data = [
+				["Raw", "Variant", "Qty in Stock", "Selling Price", "Stock Value", "Warehouse", "Company"]
+			];
 
-            let export_data = [];
-            // হেডার অ্যাড করা
-            export_data.push(["Raw", "Variant", "Qty in Stock", "Selling Price", "Stock Value", "Warehouse", "Company"]);
+			checked.forEach(cb => {
+				const idx = parseInt(cb.getAttribute('data-idx'));
+				const d = real_data[idx];
+				if (d) {
+					export_data.push([
+						d.raw_code, d.variant, d.qty_in_stock,
+						d.selling_price, d.stock_value,
+						d.warehouse, d.company
+					]);
+				}
+			});
 
-            selected_indices.forEach(idx => {
-                let d = report.data[idx];
-                if (d) {
-                    export_data.push([
-                        d.raw_code, d.variant, d.qty_in_stock, 
-                        d.selling_price, d.stock_value, d.warehouse, d.company
-                    ]);
-                }
-            });
+			frappe.tools.downloadify(export_data, null, "Selected_Stock_Report");
+		});
 
-            // CSV ডাউনলোড
-            frappe.tools.downloadify(export_data, null, "Selected_Stock_Report");
-        });
-    },
-
-    "after_datatable_render": function(datatable) {
-        // টোটাল ক্যালকুলেশন আগের মতোই থাকবে
-        let qty_sum = 0;
-        let value_sum = 0;
-
-        datatable.data.forEach(row => {
-            qty_sum += flt(row.qty_in_stock);
-            value_sum += flt(row.stock_value);
-        });
-    }
+		// ✅ Manual inject button (test এর জন্য)
+		report.page.add_inner_button(__("Add Checkboxes"), function() {
+			inject_checkboxes();
+		});
+	}
 };
+
+function inject_checkboxes() {
+	// Header
+	const header_col0 = document.querySelector('.dt-cell--header.dt-cell--col-0 .dt-cell__content');
+	if (header_col0) {
+		header_col0.innerHTML = `
+			<input type="checkbox" class="select-all-cb" 
+			style="width:15px;height:15px;cursor:pointer;display:block;margin:auto;">
+		`;
+		header_col0.querySelector('.select-all-cb').addEventListener('change', function() {
+			document.querySelectorAll('.row-cb').forEach(cb => {
+				cb.checked = this.checked;
+				cb.closest('.dt-row').style.background = this.checked ? '#e8f4fd' : '';
+			});
+		});
+	}
+
+	// Rows
+	document.querySelectorAll('.dt-scrollable .dt-row').forEach((row, idx) => {
+		const col0 = row.querySelector('.dt-cell--col-0 .dt-cell__content');
+		if (col0) {
+			col0.innerHTML = `
+				<input type="checkbox" class="row-cb" data-idx="${idx}"
+				style="width:15px;height:15px;cursor:pointer;display:block;margin:auto;">
+			`;
+			col0.querySelector('.row-cb').addEventListener('change', function() {
+				this.closest('.dt-row').style.background = this.checked ? '#e8f4fd' : '';
+			});
+		}
+	});
+
+	console.log("✅ Checkboxes injected:", document.querySelectorAll('.row-cb').length);
+}
