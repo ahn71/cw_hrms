@@ -1,7 +1,8 @@
 # Copyright (c) 2026, Codeware Limited and contributors
 import frappe
 from frappe import _
-from frappe.utils import getdate, add_days
+from frappe.utils import getdate, add_days,date_diff
+
 
 def execute(filters=None):
     if not filters:
@@ -55,6 +56,8 @@ def get_employee_holiday_count(holiday_list, filters):
     return count[0][0] if count else 0
 
 def get_report_data(filters):
+    
+
     conditions = "att.docstatus = 1"
     if filters.get("from_date"): conditions += f" AND att.attendance_date >= '{filters.get('from_date')}'"
     if filters.get("to_date"): conditions += f" AND att.attendance_date <= '{filters.get('to_date')}'"
@@ -64,30 +67,34 @@ def get_report_data(filters):
     if filters.get("employee_status"):
         conditions += f" AND emp.status = '{filters.get('employee_status')}'"
 
-    # ১. এখানে employee.holiday_list-কেও সিলেক্ট করছি
     raw_data = frappe.db.sql(f"""
         SELECT 
             att.employee, att.employee_name, emp.designation, att.department,
-            att.status, att.late_entry, att.working_hours, emp.holiday_list
+            att.status, att.late_entry, att.working_hours, emp.holiday_list,
+            att.attendance_date
         FROM `tabAttendance` att
         LEFT JOIN `tabEmployee` emp ON att.employee = emp.name
         WHERE {conditions}
     """, as_dict=1)
 
-    # ২. দ্রুত ছুটির সংখ্যা বের করার জন্য একটি ক্যাশ (Cache) ম্যাপ তৈরি
     holiday_count_cache = {}
+    # প্রতিটি Holiday List এর নির্দিষ্ট তারিখগুলো বের করার জন্য ডিকশনারি
+    holiday_days_cache = {} 
 
     emp_map = {}
     for d in raw_data:
         emp = d.employee
-        if emp not in emp_map:
-            # এমপ্লয়ীর নিজস্ব হলিডে লিস্ট অনুযায়ী ছুটি গণনা
-            h_list = d.holiday_list
-            if h_list not in holiday_count_cache:
-                holiday_count_cache[h_list] = get_employee_holiday_count(h_list, filters)
-            
-            emp_holidays = holiday_count_cache[h_list]
+        h_list = d.holiday_list
+        
+        if h_list not in holiday_days_cache:
+            # ওই হলিডে লিস্টের সব তারিখগুলো নিয়ে আসা
+            holidays = frappe.db.get_all("Holiday", 
+                filters={"parent": h_list, "holiday_date": ["between", [filters.get("from_date"), filters.get("to_date")]]},
+                fields=["holiday_date"])
+            holiday_days_cache[h_list] = [str(h.holiday_date) for h in holidays]
+            holiday_count_cache[h_list] = len(holidays)
 
+        if emp not in emp_map:
             emp_map[emp] = {
                 "employee_name": d.employee_name,
                 "employee": d.employee,
@@ -98,16 +105,25 @@ def get_report_data(filters):
                 "late_days": 0,
                 "home_office": 0, 
                 "leave_days": 0.0,
-                "holidays": emp_holidays, # সঠিক এমপ্লয়ী ভিত্তিক ছুটি
+                "holidays": holiday_count_cache[h_list],
                 "total_stay_raw": 0.0 
             }
         
         row = emp_map[emp]
-        # বাকি স্ট্যাটাস লজিক আগের মতোই...
-        if d.status == "Present": row["working_days"] += 1
-        elif d.status == "Absent": row["absent_days"] += 1
-        elif d.status == "Half Day": row["working_days"] += 0.5
-        elif d.status == "On Leave": row["leave_days"] += 1
+        curr_date = str(d.attendance_date)
+
+        # লজিক: যদি দিনটি Holiday লিস্টে থাকে, তবে তাকে Absent হিসেবে গণনা করা হবে না
+        is_holiday = curr_date in holiday_days_cache.get(h_list, [])
+
+        if d.status == "Present": 
+            row["working_days"] += 1
+        elif d.status == "Absent": 
+            if not is_holiday: # ছুটি না হলেই কেবল Absent যোগ হবে
+                row["absent_days"] += 1
+        elif d.status == "Half Day": 
+            row["working_days"] += 0.5
+        elif d.status == "On Leave": 
+            row["leave_days"] += 1
         elif d.status == "Work From Home":
             row["home_office"] += 1
             row["working_days"] += 1
@@ -115,14 +131,17 @@ def get_report_data(filters):
         if d.late_entry: row["late_days"] += 1
         row["total_stay_raw"] += (d.working_hours or 0)
 
-    # ফাইনাল রিপোর্ট ডাটা ক্যালকুলেশন...
     report_data = []
+    # তারিখের ব্যবধান বের করা (Total Days ফিক্স করার জন্য)
+    total_period_days = date_diff(filters.get("to_date"), filters.get("from_date")) + 1
+
     for emp_id, val in emp_map.items():
-        val["total_days"] = val["working_days"] + val["absent_days"] + val["leave_days"] + val["holidays"]
+        # ক্যালকুলেশন না করে সরাসরি পিরিয়ড এর দিন বসিয়ে দিন যাতে ৩১ দিন না দেখায়
+        val["total_days"] = total_period_days 
+        
         avg_raw = val["total_stay_raw"] / val["working_days"] if val["working_days"] > 0 else 0
         val["total_stay"] = format_duration(val["total_stay_raw"])
         val["avg_time"] = format_duration(avg_raw)
         report_data.append(val)
 
     return report_data
-
