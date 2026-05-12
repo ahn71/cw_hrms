@@ -8,11 +8,12 @@ def execute(filters=None):
     columns = get_columns()
     conditions = get_conditions(filters)
     
-    # SQL Query
+    # SQL Query: Added item.item_name
     data = frappe.db.sql(f"""
         SELECT 
             SUBSTRING(bin.item_code, 1, 3) as raw_code,
             bin.item_code as variant,
+            item.item_name as item_name,
             bin.actual_qty as qty_in_stock,
             bin.warehouse as warehouse,
             wh.company as company
@@ -20,6 +21,8 @@ def execute(filters=None):
             `tabBin` bin
         INNER JOIN 
             `tabWarehouse` wh ON bin.warehouse = wh.name
+        INNER JOIN
+            `tabItem` item ON bin.item_code = item.name
         WHERE 
             bin.actual_qty > 0 {conditions}
         ORDER BY 
@@ -37,13 +40,18 @@ def execute(filters=None):
             {"item_code": d.variant, "price_list": "Standard Selling"}, "price_list_rate") or 0
         
         stock_value = d.qty_in_stock * selling_price
-        
         total_qty += d.qty_in_stock
         total_stock_value += stock_value
+
+        # Formatting Raw and Variant to show Name below Code
+        # We use \n for a new line. 
+        # For 'Raw', we logic check if it's a new group to avoid repeating.
+        raw_display = f"{d.raw_code}\n{d.item_name[:10]}..." if d.raw_code != last_raw else ""
+        variant_display = f"{d.variant}\n{d.item_name}"
         
         row = {
-            "raw_code": d.raw_code if d.raw_code != last_raw else "",
-            "variant": d.variant,
+            "raw_code": raw_display,
+            "variant": variant_display,
             "qty_in_stock": d.qty_in_stock,
             "selling_price": selling_price,
             "stock_value": stock_value,
@@ -53,15 +61,13 @@ def execute(filters=None):
         result.append(row)
         last_raw = d.raw_code
 
-    # কলামের নিচে গ্র্যান্ড টোটাল রো (Row) যোগ করা
     if result:
         result.append({
-            "variant": "Total" ,
+            "variant": "Total",
             "qty_in_stock": total_qty,
             "stock_value": total_stock_value
         })
 
-    # রিপোর্ট সামারি
     report_summary = [
         {"value": total_qty, "indicator": "Blue", "label": _("Total Quantity"), "datatype": "Float"},
         {"value": total_stock_value, "indicator": "Green", "label": _("Total Stock Value"), "datatype": "Currency", 
@@ -82,9 +88,9 @@ def get_conditions(filters):
 
 def get_columns():
     return [
-        {"label": _("Raw"), "fieldname": "raw_code", "fieldtype": "Data", "width": 100},
-        {"label": _("Variant"), "fieldname": "variant", "fieldtype": "Link", "options": "Item", "width": 150},
-        # 'qty_in_stock' এবং 'stock_value' তে Sum দেখানোর জন্য logic যোগ করা হয়েছে
+        # Note: Changed fieldtype to 'Data' for Variant to allow custom string formatting
+        {"label": _("Raw"), "fieldname": "raw_code", "fieldtype": "Data", "width": 120},
+        {"label": _("Variant"), "fieldname": "variant", "fieldtype": "Data", "width": 180},
         {"label": _("Qty in Stock"), "fieldname": "qty_in_stock", "fieldtype": "Float", "width": 100},
         {"label": _("Selling Price"), "fieldname": "selling_price", "fieldtype": "Currency", "width": 120},
         {"label": _("Stock Value"), "fieldname": "stock_value", "fieldtype": "Currency", "width": 120},
