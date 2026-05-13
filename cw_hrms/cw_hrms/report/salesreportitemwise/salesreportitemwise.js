@@ -55,123 +55,105 @@ frappe.query_reports["SalesReportItemWise"] = {
     },
 
     "onload": function(report) {
+    report.page.add_inner_button(__("Custom Print"), function() {
 
-        report.page.add_inner_button(__("Custom Print"), function() {
+        const filters = report.get_values();
+        const company = filters.company;
 
-            const filters = report.get_values();
-            const company = filters.company;
+        frappe.db.get_doc("Letter Head", "AgronyInfo").then(function(lh) {
 
-            frappe.db.get_value(
-                "Letter Head",
-                { "company": company, "is_default": 1 },
-                ["content", "footer"],
-                function(letterhead) {
+            let header_html    = lh.content || `<h2 style="text-align:center;">${company}</h2>`;
+            let footer_content = lh.footer  || "";
 
-                    const header_html = (letterhead && letterhead.content)
-                        ? letterhead.content
-                        : `<h2 style="text-align:center;">${company}</h2>`;
+            const columns = frappe.query_report.columns;
+            const data    = frappe.query_report.data;
 
-                    const footer_content = (letterhead && letterhead.footer)
-                        ? letterhead.footer
-                        : "";
+            let table_html = `
+                <table border="1" cellpadding="5" cellspacing="0"
+                    style="width:100%; border-collapse:collapse; font-size:12px; margin-top:15px;">
+                    <thead>
+                        <tr style="background:#f0f0f0;">
+            `;
+            columns.forEach(col => {
+                table_html += `<th style="text-align:left; padding:6px 8px;">${col.label}</th>`;
+            });
+            table_html += `</tr></thead><tbody>`;
 
-                    const columns = frappe.query_report.columns;
-                    const data    = frappe.query_report.data;
+            data.forEach(row => {
+                const is_total = row.posting_date === "Total";
+                const row_style = is_total
+                    ? `style="font-weight:bold; background:#f0f4ff; border-top:2px solid #5e64ff;"`
+                    : "";
 
-                    // Table build
-                    let table_html = `
-                        <table border="1" cellpadding="5" cellspacing="0"
-                            style="width:100%; border-collapse:collapse; font-size:12px;">
-                            <thead>
-                                <tr style="background:#f0f0f0;">
-                    `;
-                    columns.forEach(col => {
-                        table_html += `<th style="text-align:left; padding:6px 8px;">${col.label}</th>`;
-                    });
-                    table_html += `</tr></thead><tbody>`;
+                table_html += `<tr ${row_style}>`;
+                columns.forEach(col => {
+                    let val = row[col.fieldname];
+                    if (val === null || val === undefined) val = "";
+                    if (col.fieldtype === "Currency" && val !== "") {
+                        val = frappe.format(val, { fieldtype: "Currency" });
+                    }
+                    if (col.fieldtype === "Float" && val !== "") {
+                        val = frappe.format(val, { fieldtype: "Float" });
+                    }
+                    table_html += `<td style="padding:5px 8px;">${val}</td>`;
+                });
+                table_html += `</tr>`;
+            });
+            table_html += `</tbody></table>`;
 
-                    data.forEach(row => {
-                        const is_total = row.posting_date === "Total";
-                        const row_style = is_total
-                            ? `style="font-weight:bold; background:#f0f4ff; border-top:2px solid #5e64ff;"`
-                            : "";
+            const from_date = frappe.datetime.str_to_user(filters.from_date);
+            const to_date   = frappe.datetime.str_to_user(filters.to_date);
 
-                        table_html += `<tr ${row_style}>`;
-                        columns.forEach(col => {
-                            let val = row[col.fieldname];
-                            if (val === null || val === undefined) val = "";
+            const signature_html = `
+                <div style="margin-top:60px; display:flex; justify-content:space-between; padding:0 20px;">
+                    <div style="text-align:center;">
+                        <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
+                        <p style="margin:5px 0; font-size:12px;">Prepared by</p>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
+                        <p style="margin:5px 0; font-size:12px;">Authorized by</p>
+                    </div>
+                </div>
+                <div style="margin-top:20px; text-align:right; font-size:11px; color:#666;">
+                    Date: ${frappe.datetime.str_to_user(frappe.datetime.get_today())}
+                </div>
+            `;
 
-                            if (col.fieldtype === "Currency" && val !== "") {
-                                val = frappe.format(val, { fieldtype: "Currency" });
-                            }
-                            if (col.fieldtype === "Float" && val !== "") {
-                                val = frappe.format(val, { fieldtype: "Float" });
-                            }
-                            table_html += `<td style="padding:5px 8px;">${val}</td>`;
-                        });
-                        table_html += `</tr>`;
-                    });
-                    table_html += `</tbody></table>`;
+            const print_html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>Sales Report - ${company}</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        table { page-break-inside: auto; }
+                        tr { page-break-inside: avoid; }
+                        @media print { body { margin: 10px; } }
+                    </style>
+                </head>
+                <body>
+                    ${header_html}
+                    <div style="text-align:center; margin:15px 0 5px;">
+                        <h3 style="margin:0;">Sales Report (Item Wise)</h3>
+                        <p style="margin:4px 0; font-size:12px; color:#555;">
+                            Period: ${from_date} to ${to_date}
+                        </p>
+                    </div>
+                    ${table_html}
+                    ${footer_content}
+                    ${signature_html}
+                </body>
+                </html>
+            `;
 
-                    // Date range
-                    const from_date = frappe.datetime.str_to_user(filters.from_date);
-                    const to_date   = frappe.datetime.str_to_user(filters.to_date);
-
-                    // Signature
-                    const signature_html = `
-                        <div style="margin-top:60px; display:flex; justify-content:space-between; padding:0 20px;">
-                            <div style="text-align:center;">
-                                <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
-                                <p style="margin:5px 0; font-size:12px;">Prepared by</p>
-                            </div>
-                            <div style="text-align:center;">
-                                <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
-                                <p style="margin:5px 0; font-size:12px;">Authorized by</p>
-                            </div>
-                        </div>
-                        <div style="margin-top:20px; text-align:right; font-size:11px; color:#666;">
-                            Date: ${frappe.datetime.str_to_user(frappe.datetime.get_today())}
-                        </div>
-                    `;
-
-                    // Full print HTML
-                    const print_html = `
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <meta charset="utf-8">
-                            <title>Sales Report - ${company}</title>
-                            <style>
-                                body { font-family: Arial, sans-serif; margin: 20px; }
-                                table { page-break-inside: auto; }
-                                tr { page-break-inside: avoid; }
-                                @media print {
-                                    body { margin: 10px; }
-                                }
-                            </style>
-                        </head>
-                        <body>
-                            ${header_html}
-                            <div style="text-align:center; margin:15px 0 5px;">
-                                <h3 style="margin:0;">Sales Report (Item Wise)</h3>
-                                <p style="margin:4px 0; font-size:12px; color:#555;">
-                                    Period: ${from_date} to ${to_date}
-                                </p>
-                            </div>
-                            ${table_html}
-                            ${footer_content}
-                            ${signature_html}
-                        </body>
-                        </html>
-                    `;
-
-                    const w = window.open("", "_blank");
-                    w.document.write(print_html);
-                    w.document.close();
-                    w.focus();
-                    setTimeout(() => { w.print(); }, 500);
-                }
-            );
+            const w = window.open("", "_blank");
+            w.document.write(print_html);
+            w.document.close();
+            w.focus();
+            setTimeout(() => { w.print(); }, 800);
         });
-    }
+    });
+}
 };
