@@ -68,37 +68,45 @@ frappe.query_reports["SalesReportItemWise"] = {
             const columns = frappe.query_report.columns;
             const data    = frappe.query_report.data;
 
-            // --- Rowspan Tracker Logic Start ---
+            // --- ১. ডাটা প্রসেসিং (ফাঁকা ঘর পূরণ এবং গ্রুপিং) ---
+            let processed_data = JSON.parse(JSON.stringify(data));
+            let last_inv_id = "";
             let row_span_map = {};
-            data.forEach((row, idx) => {
-                // ইনভয়েস আইডি ফিল্ডটি চেক করুন (সাধারণত 'name', 'voucher_no' বা 'parent_invoice' হয়)
-                let inv_id = row.name || row.voucher_no || row.parent_invoice;
-                
-                if (inv_id && row.posting_date !== "Total") {
-                    if (!row_span_map[inv_id]) {
-                        row_span_map[inv_id] = { start_idx: idx, count: 0 };
-                    }
-                    row_span_map[inv_id].count++;
+
+            processed_data.forEach((row, idx) => {
+                if (row.posting_date === "Total") return;
+
+                // যদি ইনভয়েস আইডি ফাঁকা থাকে, আগের আইডি ব্যবহার করো
+                let current_id = row.name || row.voucher_no || row.parent_invoice;
+                if (!current_id || current_id === "") {
+                    row._is_merged_row = true; // এটি একটি অতিরিক্ত রো
+                    current_id = last_inv_id;
+                } else {
+                    last_inv_id = current_id;
                 }
+
+                // ম্যাপে কাউন্ট বাড়াও
+                if (!row_span_map[current_id]) {
+                    row_span_map[current_id] = { start_idx: idx, count: 0 };
+                }
+                row_span_map[current_id].count++;
+                row._inv_group_id = current_id; // গ্রুপ ট্র্যাকিংয়ের জন্য
             });
-            // --- Rowspan Tracker Logic End ---
 
             let table_html = `
                 <table border="1" cellpadding="5" cellspacing="0"
-                    style="width:100%; border-collapse:collapse; font-size:12px; margin-top:15px;">
+                    style="width:100%; border-collapse:collapse; font-size:11px; margin-top:15px;">
                     <thead>
-                        <tr style="background:#f0f0f0;">
+                        <tr style="background:#f5f5f5;">
             `;
             columns.forEach(col => {
-                table_html += `<th style="text-align:left; padding:6px 8px; border:1px solid #ccc;">${col.label}</th>`;
+                table_html += `<th style="padding:6px; border:1px solid #999; text-align:center;">${col.label}</th>`;
             });
             table_html += `</tr></thead><tbody>`;
 
-            data.forEach((row, idx) => {
+            processed_data.forEach((row, idx) => {
                 const is_total = row.posting_date === "Total";
-                const row_style = is_total
-                    ? `style="font-weight:bold; background:#f0f4ff; border-top:2px solid #5e64ff;"`
-                    : "";
+                const row_style = is_total ? `style="font-weight:bold; background:#f0f4ff;"` : "";
 
                 table_html += `<tr ${row_style}>`;
                 
@@ -106,30 +114,31 @@ frappe.query_reports["SalesReportItemWise"] = {
                     let val = row[col.fieldname];
                     if (val === null || val === undefined) val = "";
                     
-                    // Formatting for Currency and Float
-                    if (col.fieldtype === "Currency" && val !== "") {
-                        val = frappe.format(val, { fieldtype: "Currency" });
-                    }
-                    if (col.fieldtype === "Float" && val !== "") {
-                        val = frappe.format(val, { fieldtype: "Float" });
+                    // Formatting
+                    if ((col.fieldtype === "Currency" || col.fieldtype === "Float") && val !== "") {
+                        val = frappe.format(val, { fieldtype: col.fieldtype });
                     }
 
-                    // যে কলামগুলো মার্জ করতে চান (যেমন: Date, Invoice ID, Customer)
-                    const merge_cols = ["posting_date", "name", "customer", "customer_name", "voucher_no"];
-                    let current_inv_id = row.name || row.voucher_no || row.parent_invoice;
+                    // --- ২. স্পেশাল মার্জিং লজিক ---
+                    const merge_cols = [
+                        "posting_date", "name", "customer", "customer_name", "voucher_no",
+                        "total", "grand_total", "paid_amount", "outstanding_amount", "outstanding"
+                    ];
+                    
+                    let group_id = row._inv_group_id;
 
-                    if (merge_cols.includes(col.fieldname) && !is_total && current_inv_id) {
-                        let span_info = row_span_map[current_inv_id];
+                    if (merge_cols.includes(col.fieldname) && !is_total && group_id) {
+                        let span_info = row_span_map[group_id];
                         
                         if (span_info && span_info.start_idx === idx) {
-                            // শুধুমাত্র প্রথম রো-তে rowspan বসবে এবং টেক্সট মাঝখানে থাকবে
-                            table_html += `<td rowspan="${span_info.count}" style="padding:5px 8px; border:1px solid #ccc; text-align:center; vertical-align:middle;">${val}</td>`;
-                        } 
-                        // যদি এটি গ্রুপিংয়ের মাঝখানের রো হয়, তবে <td> তৈরি হবে না (skip)
+                            // প্রথম রো-তে rowspan বসবে
+                            table_html += `<td rowspan="${span_info.count}" style="padding:5px; border:1px solid #999; text-align:center; vertical-align:middle;">${val}</td>`;
+                        }
+                        // বাকি রোগুলোতে এই কলামের জন্য <td> তৈরি হবে না
                     } else {
-                        // নরমাল কলামগুলো (Item, Qty, Rate ইত্যাদি) এবং Total রো-এর জন্য
-                        let text_align = (col.fieldtype === "Currency" || col.fieldtype === "Float") ? "right" : "left";
-                        table_html += `<td style="padding:5px 8px; border:1px solid #ccc; text-align:${text_align};">${val}</td>`;
+                        // আইটেম ডিটেইলস (Qty, Rate, Item Name) মার্জ হবে না
+                        let align = (col.fieldtype === "Currency" || col.fieldtype === "Float") ? "right" : "left";
+                        table_html += `<td style="padding:5px; border:1px solid #999; text-align:${align};">${val}</td>`;
                     }
                 });
                 table_html += `</tr>`;
@@ -137,47 +146,26 @@ frappe.query_reports["SalesReportItemWise"] = {
             
             table_html += `</tbody></table>`;
 
+            // --- ৩. প্রিন্ট উইন্ডো ---
             const from_date = frappe.datetime.str_to_user(filters.from_date);
             const to_date   = frappe.datetime.str_to_user(filters.to_date);
-
-            const signature_html = `
-                <div style="margin-top:60px; display:flex; justify-content:space-between; padding:0 20px;">
-                    <div style="text-align:center;">
-                        <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
-                        <p style="margin:5px 0; font-size:12px;">Prepared by</p>
-                    </div>
-                    <div style="text-align:center;">
-                        <div style="border-top:1px solid #333; width:180px; margin:0 auto;"></div>
-                        <p style="margin:5px 0; font-size:12px;">Authorized by</p>
-                    </div>
-                </div>
-            `;
-
             const print_html = `
-                <!DOCTYPE html>
                 <html>
                 <head>
-                    <meta charset="utf-8">
-                    <title>Sales Report - ${company}</title>
                     <style>
-                        body { font-family: Arial, sans-serif; margin: 20px; }
-                        table { page-break-inside: auto; border-collapse: collapse; }
-                        tr { page-break-inside: avoid; }
-                        th, td { border: 1px solid #ccc; }
-                        @media print { body { margin: 10px; } }
+                        body { font-family: sans-serif; margin: 20px; }
+                        table { width: 100%; border-collapse: collapse; }
+                        th, td { border: 1px solid #999; }
                     </style>
                 </head>
                 <body>
                     ${header_html}
-                    <div style="text-align:center; margin:15px 0 5px;">
-                        <h3 style="margin:0;">Sales Report (Item Wise)</h3>
-                        <p style="margin:4px 0; font-size:12px; color:#555;">
-                            Period: ${from_date} to ${to_date}
-                        </p>
+                    <div style="text-align:center; margin-bottom:20px;">
+                        <h3>Sales Report (Item Wise)</h3>
+                        <p>Period: ${from_date} to ${to_date}</p>
                     </div>
                     ${table_html}
                     ${footer_content}
-                    ${signature_html}
                 </body>
                 </html>
             `;
@@ -185,8 +173,7 @@ frappe.query_reports["SalesReportItemWise"] = {
             const w = window.open("", "_blank");
             w.document.write(print_html);
             w.document.close();
-            w.focus();
-            setTimeout(() => { w.print(); }, 800);
+            setTimeout(() => { w.print(); }, 1000);
         });
     });
 }
