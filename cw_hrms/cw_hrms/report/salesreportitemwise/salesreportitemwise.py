@@ -28,6 +28,9 @@ def get_columns():
 def get_data(filters):
     conditions = get_conditions(filters)
 
+    if filters.get("item"):
+        filters["item"] = f"%{filters['item']}%"
+
     raw_data = frappe.db.sql(f"""
         SELECT
             si.posting_date,
@@ -48,8 +51,9 @@ def get_data(filters):
         ORDER BY si.posting_date DESC, si.name ASC, sii.idx ASC
     """, filters, as_dict=1)
 
-    final_data = []
-    seen_invoices = set()
+    final_data         = []
+    seen_invoices      = set()
+    item_filter_active = bool(filters.get("item"))
 
     total_qty         = 0
     total_item_total  = 0
@@ -66,7 +70,7 @@ def get_data(filters):
         total_qty        += row.qty or 0
         total_item_total += row.item_total or 0
 
-        if is_first:
+        if is_first and not item_filter_active:
             total_total       += row.invoice_total or 0
             total_discount    += row.invoice_discount or 0
             total_grand_total += row.invoice_grand_total or 0
@@ -77,11 +81,11 @@ def get_data(filters):
             "posting_date":        row.posting_date        if is_first else None,
             "invoice_id":          row.invoice_id          if is_first else None,
             "customer":            row.customer            if is_first else None,
-            "total":               row.invoice_total       if is_first else None,
-            "additional_discount": row.invoice_discount    if is_first else None,
-            "grand_total":         row.invoice_grand_total if is_first else None,
-            "paid_amount":         row.invoice_paid        if is_first else None,
-            "outstanding_amount":  row.invoice_outstanding if is_first else None,
+            "total":               (row.invoice_total       if is_first else None) if not item_filter_active else None,
+            "additional_discount": (row.invoice_discount    if is_first else None) if not item_filter_active else None,
+            "grand_total":         (row.invoice_grand_total if is_first else None) if not item_filter_active else None,
+            "paid_amount":         (row.invoice_paid        if is_first else None) if not item_filter_active else None,
+            "outstanding_amount":  (row.invoice_outstanding if is_first else None) if not item_filter_active else None,
             "item_name":           row.item_name,
             "qty":                 row.qty,
             "selling_rate":        row.selling_rate,
@@ -90,17 +94,18 @@ def get_data(filters):
 
     final_data.append({
         "posting_date":        "Total",
-        "invoice_id":          "Total",
+        "invoice_id":          None,
         "customer":            None,
         "item_name":           None,
         "selling_rate":        None,
         "qty":                 total_qty,
         "item_total":          total_item_total,
-        "total":               total_total,
-        "additional_discount": total_discount,
-        "grand_total":         total_grand_total,
-        "paid_amount":         total_paid,
-        "outstanding_amount":  total_outstanding,
+        "total":               total_total       if not item_filter_active else None,
+        "additional_discount": total_discount    if not item_filter_active else None,
+        "grand_total":         total_grand_total if not item_filter_active else None,
+        "paid_amount":         total_paid        if not item_filter_active else None,
+        "outstanding_amount":  total_outstanding if not item_filter_active else None,
+        "is_total_row":        1,
     })
 
     return final_data
@@ -111,4 +116,5 @@ def get_conditions(filters):
     if filters.get("company"):   conditions += " AND si.company = %(company)s"
     if filters.get("from_date"): conditions += " AND si.posting_date >= %(from_date)s"
     if filters.get("to_date"):   conditions += " AND si.posting_date <= %(to_date)s"
+    if filters.get("item"):      conditions += " AND (sii.item_code LIKE %(item)s OR sii.item_name LIKE %(item)s)"
     return conditions
