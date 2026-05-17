@@ -269,7 +269,9 @@ def get_report_summary(data):
     # if hol == 0 and t > 0:
     #     frappe.msgprint("<b>Summary Error:</b> Weekend/Holiday count is 0. Check 'is_weekend_or_holiday' flag in update_data loop.", alert=True)
 
-    working_days = p + h-od
+    working_days = float(p) + (float(h) * 0.5) - float(od)
+    
+    # জিরো ডিভিশন এরর এড়াতে চেক এবং এভারেজ ক্যালকুলেশন
     avg_wh = format_seconds_to_hms(total_seconds / working_days) if working_days > 0 else "00:00:00"
 
     return [

@@ -56,7 +56,8 @@ frappe.query_reports["SalesReportItemWise"] = {
 
    "onload": function(report) {
     report.page.add_inner_button(__("Custom Print"), function() {
-
+		const data = frappe.query_report.data;
+        console.log("Report Data:", data);
         const filters = report.get_values();
         const company = filters.company;
 
