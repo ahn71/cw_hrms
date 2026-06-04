@@ -208,7 +208,7 @@ def get_report_data(filters):
 
         # OD bad diye avg calculation
         actual_working_days = (
-            val["working_days"] - val["od_days"]
+            val["working_days"] - val["od_days"]-val["home_office"]
         )
 
         avg_raw = (
