@@ -190,7 +190,7 @@ def get_report_data(filters):
             row["working_days"] += 1
 
         # Late count
-        if d.late_entry:
+        if d.late_entry and d.status != "Half Day":
             row["late_days"] += 1
 
         # Total working hour add

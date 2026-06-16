@@ -104,7 +104,7 @@ def get_user_stats(employee=None):
         curr_date = add_days(curr_date, 1)
 
     data["attendance_details"] = sorted(temp_details, key=lambda x: x['attendance_date'], reverse=True)
-
+    
     # ৫. লিভ Allocation & Calculation
     allocations = frappe.get_all("Leave Allocation",
         filters={"employee": employee, "docstatus": 1, "from_date": ["<=", today], "to_date": [">=", today]},

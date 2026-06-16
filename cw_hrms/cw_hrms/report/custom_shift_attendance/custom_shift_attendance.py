@@ -262,7 +262,7 @@ def get_report_summary(data):
                 elif "work from home" in status: wfh += 1
                 
 
-            if d.get("late_entry"): l += 1
+            if d.get("late_entry") and str(d.get("status")).lower() != "half day": l += 1
             if d.get("early_exit"): e += 1
 
     # --- ফাইনাল কাউন্ট চেক ---
