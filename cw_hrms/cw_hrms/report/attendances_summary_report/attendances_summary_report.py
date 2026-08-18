@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Codeware Limited and contributors
 import frappe
 from frappe import _
-from frappe.utils import getdate, add_days,date_diff
+from frappe.utils import getdate, add_days, date_diff
 
 
 def execute(filters=None):
@@ -13,6 +13,7 @@ def execute(filters=None):
     
     return columns, data
 
+
 def get_columns():
     return [
         {"label": _("Employee Name"), "fieldname": "employee_name", "fieldtype": "Data", "width": 150},
@@ -21,7 +22,7 @@ def get_columns():
         {"label": _("Department"), "fieldname": "department", "fieldtype": "Data", "width": 120},
         {"label": _("Total Days"), "fieldname": "total_days", "fieldtype": "Float", "width": 100},
         {"label": _("Working Days"), "fieldname": "working_days", "fieldtype": "Float", "width": 100},
-        {"label": _("Holiday/Weekend"), "fieldname": "holidays", "fieldtype": "Float", "width": 120}, # নতুন কলাম
+        {"label": _("Holiday/Weekend"), "fieldname": "holidays", "fieldtype": "Float", "width": 120},
         {"label": _("Absent"), "fieldname": "absent_days", "fieldtype": "Float", "width": 80},
         {"label": _("Late"), "fieldname": "late_days", "fieldtype": "Int", "width": 80},
         {"label": _("Home Office"), "fieldname": "home_office", "fieldtype": "Int", "width": 100},
@@ -30,34 +31,95 @@ def get_columns():
         {"label": _("Avg Time"), "fieldname": "avg_time", "fieldtype": "Data", "width": 120},
     ]
 
+
 def format_duration(hours):
-    if not hours: return "00:00:00"
+    if not hours:
+        return "00:00:00"
     total_seconds = int(hours * 3600)
     hh = total_seconds // 3600
     mm = (total_seconds % 3600) // 60
     ss = total_seconds % 60
     return f"{hh:02}:{mm:02}:{ss:02}"
 
-def get_employee_holiday_count(holiday_list, filters):
-    """নির্দিষ্ট Holiday List এর আন্ডারে কতগুলো ছুটি আছে তা বের করা"""
-    if not holiday_list:
-        return 0
-        
-    from_date = filters.get("from_date")
-    to_date = filters.get("to_date")
-    
-    # tabHoliday টেবিল থেকে নির্দিষ্ট লিস্টের জন্য কাউন্ট
-    count = frappe.db.sql("""
-        SELECT COUNT(name) 
-        FROM `tabHoliday` 
-        WHERE parent = %s AND holiday_date BETWEEN %s AND %s
-    """, (holiday_list, from_date, to_date))
-    
-    return count[0][0] if count else 0
+
+def get_user_allowed_departments(user):
+    """?????? ????? ??????? User Permission ???? Department ??? ???"""
+    try:
+        user_perms = frappe.defaults.get_user_permissions(user) or {}
+        dept_perms = user_perms.get("Department", [])
+        return [d.get("doc") for d in dept_perms if isinstance(d, dict) and d.get("doc")]
+    except Exception:
+        # ?????? ????? ??????? DB ???? ???? ???
+        return frappe.db.get_all(
+            "User Permission",
+            filters={"user": user, "allow": "Department"},
+            pluck="for_value"
+        )
+
 
 def get_report_data(filters):
 
     conditions = "att.docstatus = 1"
+
+    # --- DYNAMIC PERMISSION & REPORTS TO LOGIC ---
+    user = frappe.session.user
+    user_roles = frappe.get_roles(user)
+
+    # System Manager ?? Administrator ?? ??? ??????? ??????? ??? ????
+    if "System Manager" not in user_roles and "Administrator" not in user_roles:
+        
+        allowed_employees = []
+        current_emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
+
+        if current_emp:
+            # ?. ????? Employee-?? "Reports To" ?????? ??????? ??????? Employee ID ???
+            subordinates = frappe.db.get_all(
+                "Employee",
+                filters={"reports_to": current_emp},
+                pluck="name"
+            )
+            allowed_employees.extend(subordinates)
+            allowed_employees.append(current_emp)  # ????? ???? ??? ??? ???
+
+        # ?. ??????? ???? ??? User Permission ??? ??? ???? (Department ????????)
+        allowed_depts = get_user_allowed_departments(user)
+        
+        # ?. ???????? ????? ???: Department-? Head ??????? ??? ??-? ??? Safe-ly ???
+        dept_meta = frappe.get_meta("Department")
+        head_field = None
+        for field in ["head_of_department", "department_head", "custom_department_head"]:
+            if dept_meta.has_field(field):
+                head_field = field
+                break
+
+        if head_field and current_emp:
+            depts_headed = frappe.db.get_all(
+                "Department",
+                filters={head_field: ["in", [current_emp, user]]},
+                pluck="name"
+            )
+            allowed_depts.extend(depts_headed)
+
+        # Department ???? Employee ??? ???
+        allowed_depts = list(set(allowed_depts))
+        if allowed_depts:
+            perm_dept_emps = frappe.db.get_all(
+                "Employee", 
+                filters={"department": ["in", allowed_depts]}, 
+                pluck="name"
+            )
+            allowed_employees.extend(perm_dept_emps)
+
+        # Duplicate Employee ID ?????
+        allowed_employees = list(set(allowed_employees))
+
+        # ??????? ??????
+        if allowed_employees:
+            emp_list_str = "', '".join(allowed_employees)
+            conditions += f" AND att.employee IN ('{emp_list_str}')"
+        elif current_emp:
+            conditions += f" AND att.employee = '{current_emp}'"
+    # ---------------------------------------------
 
     if filters.get("from_date"):
         conditions += f" AND att.attendance_date >= '{filters.get('from_date')}'"
@@ -146,7 +208,7 @@ def get_report_data(filters):
                 "leave_days": 0.0,
                 "od_days": 0,
 
-                "holidays": holiday_count_cache[h_list],
+                "holidays": holiday_count_cache.get(h_list, 0),
 
                 "total_stay_raw": 0.0
             }
@@ -208,7 +270,7 @@ def get_report_data(filters):
 
         # OD bad diye avg calculation
         actual_working_days = (
-            val["working_days"] - val["od_days"]-val["home_office"]
+            val["working_days"] - val["od_days"] - val["home_office"]
         )
 
         avg_raw = (
