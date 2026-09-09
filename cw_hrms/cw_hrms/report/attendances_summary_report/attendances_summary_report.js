@@ -43,6 +43,12 @@ frappe.query_reports["Attendances Summary Report"] = {
         "fieldtype": "Select",
         "options": "\nActive\nInactive\nSuspended\nLeft",
         "default": "Active"
+        },
+        {
+            "fieldname": "late_cutoff_time",
+            "label": __("Late Cutoff Time"),
+            "fieldtype": "Time",
+            "description": __("If set, entries after this time will be counted as Late.")
         }
     ],
     onload: function(report) {

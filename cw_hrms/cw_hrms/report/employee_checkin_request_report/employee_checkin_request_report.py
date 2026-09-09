@@ -10,7 +10,7 @@ def execute(filters=None):
 
     conditions = get_conditions(filters)
 
-    # Fetch Employee Checkins EXCEPT device logs (Device ID is empty/NULL)
+    # Fetch Employee Checkins EXCEPT device logs
     checkins = frappe.db.sql(f"""
         SELECT 
             emp.name as employee,
@@ -31,31 +31,22 @@ def execute(filters=None):
     if not checkins:
         return columns, data
 
-    # 1. Summary Calculations for Manual Requests
+    # Aggregate counts for summary columns
     total_applications = len(checkins)
     in_miss_count = sum(1 for d in checkins if d.log_type == 'IN')
     out_miss_count = sum(1 for d in checkins if d.log_type == 'OUT')
 
-    # Determining Most Missed Punch
-    most_missed_punch = "N/A"
+    # Determine overall most missed punch type
     if in_miss_count > out_miss_count:
-        most_missed_punch = f"IN Punch ({in_miss_count} times)"
+        most_missed = f"IN ({in_miss_count})"
     elif out_miss_count > in_miss_count:
-        most_missed_punch = f"OUT Punch ({out_miss_count} times)"
-    elif in_miss_count > 0 and in_miss_count == out_miss_count:
-        most_missed_punch = f"Equal (IN: {in_miss_count}, OUT: {out_miss_count})"
+        most_missed = f"OUT ({out_miss_count})"
+    elif in_miss_count > 0:
+        most_missed = f"Equal (IN:{in_miss_count}/OUT:{out_miss_count})"
+    else:
+        most_missed = "N/A"
 
-    # Summary Row at the Top
-    data.append({
-        "employee_name": f"<b>Total Manual Requests: {total_applications}</b>",
-        "department": f"<b>IN Requests: {in_miss_count} | OUT Requests: {out_miss_count}</b>",
-        "log_type": f"<b>Most Missed: {most_missed_punch}</b>"
-    })
-
-    # Separator Row
-    data.append({})
-
-    # 2. Detail Rows
+    # Populate table rows with summary appended as the last columns
     for row in checkins:
         data.append({
             "employee": row.employee,
@@ -65,7 +56,10 @@ def execute(filters=None):
             "application_date": row.application_date,
             "checkin_time": row.checkin_time,
             "log_type": row.log_type,
-            "workflow_state": row.workflow_state or "Submitted"
+            "workflow_state": row.workflow_state or "Submitted",
+            "total_requests": total_applications,
+            "in_out_summary": f"IN: {in_miss_count} | OUT: {out_miss_count}",
+            "most_missed_punch": most_missed
         })
 
     return columns, data
@@ -99,49 +93,67 @@ def get_columns():
             "label": _("Employee ID"),
             "fieldtype": "Link",
             "options": "Employee",
-            "width": 120
+            "width": 110
         },
         {
             "fieldname": "employee_name",
             "label": _("Employee Name"),
             "fieldtype": "Data",
-            "width": 160
+            "width": 150
         },
         {
             "fieldname": "department",
             "label": _("Department"),
             "fieldtype": "Link",
             "options": "Department",
-            "width": 140
+            "width": 130
         },
         {
             "fieldname": "company",
             "label": _("Company"),
             "fieldtype": "Link",
             "options": "Company",
-            "width": 130
+            "width": 120
         },
         {
             "fieldname": "application_date",
             "label": _("Applied Date"),
             "fieldtype": "Date",
-            "width": 120
+            "width": 110
         },
         {
             "fieldname": "checkin_time",
             "label": _("Punch Log Time"),
             "fieldtype": "Datetime",
-            "width": 160
+            "width": 150
         },
         {
             "fieldname": "log_type",
-            "label": _("Punch Type (IN/OUT)"),
+            "label": _("Punch Type"),
+            "fieldtype": "Data",
+            "width": 100
+        },
+        {
+            "fieldname": "workflow_state",
+            "label": _("Status"),
+            "fieldtype": "Data",
+            "width": 110
+        },
+        {
+            "fieldname": "total_requests",
+            "label": _("Total Applications"),
+            "fieldtype": "Int",
+            "width": 130
+        },
+        {
+            "fieldname": "in_out_summary",
+            "label": _("IN / OUT Count"),
             "fieldtype": "Data",
             "width": 140
         },
         {
-            "fieldname": "workflow_state",
-            "label": _("Workflow Status"),
+            "fieldname": "most_missed_punch",
+            "label": _("Most Missed"),
             "fieldtype": "Data",
             "width": 130
         }

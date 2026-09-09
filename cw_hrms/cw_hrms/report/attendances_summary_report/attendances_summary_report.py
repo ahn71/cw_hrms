@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Codeware Limited and contributors
 import frappe
 from frappe import _
-from frappe.utils import getdate, add_days, date_diff
+from frappe.utils import getdate, add_days, date_diff, get_time
 
 
 def execute(filters=None):
@@ -43,13 +43,12 @@ def format_duration(hours):
 
 
 def get_user_allowed_departments(user):
-    """?????? ????? ??????? User Permission ???? Department ??? ???"""
+    """ইউজার পারমিশন অনুযায়ী User Permission থেকে Department এর তালিকা নেওয়া"""
     try:
         user_perms = frappe.defaults.get_user_permissions(user) or {}
         dept_perms = user_perms.get("Department", [])
         return [d.get("doc") for d in dept_perms if isinstance(d, dict) and d.get("doc")]
     except Exception:
-        # ?????? ????? ??????? DB ???? ???? ???
         return frappe.db.get_all(
             "User Permission",
             filters={"user": user, "allow": "Department"},
@@ -65,26 +64,22 @@ def get_report_data(filters):
     user = frappe.session.user
     user_roles = frappe.get_roles(user)
 
-    # System Manager ?? Administrator ?? ??? ??????? ??????? ??? ????
     if "System Manager" not in user_roles and "Administrator" not in user_roles:
         
         allowed_employees = []
         current_emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
 
         if current_emp:
-            # ?. ????? Employee-?? "Reports To" ?????? ??????? ??????? Employee ID ???
             subordinates = frappe.db.get_all(
                 "Employee",
                 filters={"reports_to": current_emp},
                 pluck="name"
             )
             allowed_employees.extend(subordinates)
-            allowed_employees.append(current_emp)  # ????? ???? ??? ??? ???
+            allowed_employees.append(current_emp)
 
-        # ?. ??????? ???? ??? User Permission ??? ??? ???? (Department ????????)
         allowed_depts = get_user_allowed_departments(user)
         
-        # ?. ???????? ????? ???: Department-? Head ??????? ??? ??-? ??? Safe-ly ???
         dept_meta = frappe.get_meta("Department")
         head_field = None
         for field in ["head_of_department", "department_head", "custom_department_head"]:
@@ -100,7 +95,6 @@ def get_report_data(filters):
             )
             allowed_depts.extend(depts_headed)
 
-        # Department ???? Employee ??? ???
         allowed_depts = list(set(allowed_depts))
         if allowed_depts:
             perm_dept_emps = frappe.db.get_all(
@@ -110,10 +104,8 @@ def get_report_data(filters):
             )
             allowed_employees.extend(perm_dept_emps)
 
-        # Duplicate Employee ID ?????
         allowed_employees = list(set(allowed_employees))
 
-        # ??????? ??????
         if allowed_employees:
             emp_list_str = "', '".join(allowed_employees)
             conditions += f" AND att.employee IN ('{emp_list_str}')"
@@ -147,6 +139,7 @@ def get_report_data(filters):
             att.department,
             att.status,
             att.late_entry,
+            att.in_time,
             att.working_hours,
             att.attendance_request,
             emp.holiday_list,
@@ -166,12 +159,14 @@ def get_report_data(filters):
 
     emp_map = {}
 
+    # Custom Late Cutoff Time check
+    late_cutoff_time = get_time(filters.get("late_cutoff_time")) if filters.get("late_cutoff_time") else None
+
     for d in raw_data:
 
         emp = d.employee
         h_list = d.holiday_list
 
-        # Holiday cache
         if h_list not in holiday_days_cache:
 
             holidays = frappe.db.get_all(
@@ -192,7 +187,6 @@ def get_report_data(filters):
 
             holiday_count_cache[h_list] = len(holidays)
 
-        # Employee initialize
         if emp not in emp_map:
 
             emp_map[emp] = {
@@ -217,45 +211,42 @@ def get_report_data(filters):
 
         curr_date = str(d.attendance_date)
 
-        # Holiday check
         is_holiday = curr_date in holiday_days_cache.get(h_list, [])
 
-        # Present
         if d.status == "Present":
 
             row["working_days"] += 1
 
-            # OD day detect
             if d.attendance_request:
                 row["od_days"] += 1
 
-        # Absent
         elif d.status == "Absent":
 
             if not is_holiday:
                 row["absent_days"] += 1
 
-        # Half Day
         elif d.status == "Half Day":
 
             row["working_days"] += 0.5
 
-        # Leave
         elif d.status == "On Leave":
 
             row["leave_days"] += 1
 
-        # Work From Home
         elif d.status == "Work From Home":
 
             row["home_office"] += 1
             row["working_days"] += 1
 
-        # Late count
-        if d.late_entry and d.status != "Half Day":
-            row["late_days"] += 1
+        # Dynamic Late Calculation
+        if d.status != "Half Day":
+            if late_cutoff_time:
+                if d.in_time and get_time(d.in_time) > late_cutoff_time:
+                    row["late_days"] += 1
+            else:
+                if d.late_entry:
+                    row["late_days"] += 1
 
-        # Total working hour add
         row["total_stay_raw"] += (d.working_hours or 0)
 
     report_data = []
@@ -268,7 +259,6 @@ def get_report_data(filters):
 
         val["total_days"] = total_period_days
 
-        # OD bad diye avg calculation
         actual_working_days = (
             val["working_days"] - val["od_days"] - val["home_office"]
         )
